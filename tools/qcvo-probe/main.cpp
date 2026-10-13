@@ -2,7 +2,7 @@
 // qcvo-probe — both ends of QCView's output bus, for measuring either side
 // without the other (QCBridgeN/PLAN.md P1).
 //
-//   qcvo-probe consume --id ndi [--width 1920 --height 1080 --format bgra8|rgba16f]
+//   qcvo-probe consume --id ndi [--width 1920 --height 1080 --format bgra8|rgb10|rgba16f]
 //                      [--transfer sdr|pq|hlg --fit letterbox|native --content composite|a|b]
 //                      [--layers guides,annotations|none] [--seconds 10] [--dump last.ppm]
 //                      [--status "text"] [--die-after N]
@@ -72,7 +72,7 @@ bool parse(int argc, char** argv, Args* a) {
         else if (k == "--status")   { if (!next(&v)) return false; a->status = v; }
         else if (k == "--retire-after") { if (!next(&v)) return false; a->retire_after = std::atof(v.c_str()); }
         else if (k == "--die-after")    { if (!next(&v)) return false; a->die_after = std::atof(v.c_str()); }
-        else if (k == "--format")   { if (!next(&v)) return false; a->format = v == "rgba16f" ? OutputPixelFormat::RGBA16F : OutputPixelFormat::BGRA8; }
+        else if (k == "--format")   { if (!next(&v)) return false; a->format = v == "rgba16f" ? OutputPixelFormat::RGBA16F : v == "rgb10" ? OutputPixelFormat::RGB10 : OutputPixelFormat::BGRA8; }
         else if (k == "--transfer") { if (!next(&v)) return false; a->transfer = v == "pq" ? OutputTransfer::PqRec2020 : v == "hlg" ? OutputTransfer::HlgRec2020 : OutputTransfer::SdrRec709; }
         else if (k == "--fit")      { if (!next(&v)) return false; a->fit = v == "native" ? OutputFit::Native : OutputFit::Letterbox; }
         else if (k == "--content")  { if (!next(&v)) return false; a->content = v == "a" ? OutputContent::SideA : v == "b" ? OutputContent::SideB : OutputContent::Composite; }
@@ -92,6 +92,7 @@ const char* format_name(uint32_t f) {
     switch (static_cast<OutputPixelFormat>(f)) {
         case OutputPixelFormat::BGRA8:   return "BGRA8";
         case OutputPixelFormat::RGBA16F: return "RGBA16F";
+        case OutputPixelFormat::RGB10:   return "RGB10";
         default:                         return "?";
     }
 }
@@ -233,14 +234,26 @@ int consume(const Args& a) {
         sleep_ms(2);
     }
 
-    if (!a.dump.empty() && !last_pixels.empty() && last_desc.pixel_format == static_cast<uint32_t>(OutputPixelFormat::BGRA8)) {
+    const bool dump8  = last_desc.pixel_format == static_cast<uint32_t>(OutputPixelFormat::BGRA8);
+    const bool dump10 = last_desc.pixel_format == static_cast<uint32_t>(OutputPixelFormat::RGB10);
+    if (!a.dump.empty() && !last_pixels.empty() && (dump8 || dump10)) {
         if (FILE* f = std::fopen(a.dump.c_str(), "wb")) {
-            std::fprintf(f, "P6\n%u %u\n255\n", last_desc.width, last_desc.height);
+            // RGB10 is written as a 16-bit PPM (10-bit values scaled to 16), so the dump keeps every code value.
+            std::fprintf(f, "P6\n%u %u\n%u\n", last_desc.width, last_desc.height, dump10 ? 65535u : 255u);
             for (uint32_t y = 0; y < last_desc.height; ++y) {
                 const uint8_t* row = last_pixels.data() + static_cast<size_t>(y) * last_desc.bytes_per_row;
                 for (uint32_t x = 0; x < last_desc.width; ++x) {
-                    const uint8_t rgb[3] = { row[x * 4 + 2], row[x * 4 + 1], row[x * 4 + 0] };
-                    std::fwrite(rgb, 1, 3, f);
+                    if (dump8) {
+                        const uint8_t rgb[3] = { row[x * 4 + 2], row[x * 4 + 1], row[x * 4 + 0] };
+                        std::fwrite(rgb, 1, 3, f);
+                    } else {
+                        uint32_t w; std::memcpy(&w, row + static_cast<size_t>(x) * 4, 4);
+                        const uint16_t c[3] = { uint16_t(((w      ) & 0x3FFu) * 64u + ((w      ) & 0x3FFu) / 16u),
+                                                uint16_t(((w >> 10) & 0x3FFu) * 64u + ((w >> 10) & 0x3FFu) / 16u),
+                                                uint16_t(((w >> 20) & 0x3FFu) * 64u + ((w >> 20) & 0x3FFu) / 16u) };
+                        const uint8_t be[6] = { uint8_t(c[0] >> 8), uint8_t(c[0]), uint8_t(c[1] >> 8), uint8_t(c[1]), uint8_t(c[2] >> 8), uint8_t(c[2]) };
+                        std::fwrite(be, 1, 6, f);
+                    }
                 }
             }
             std::fclose(f);
@@ -273,6 +286,12 @@ void paint(uint8_t* dst, const OutputFrameDesc& d, uint64_t n) {
             if (d.pixel_format == static_cast<uint32_t>(OutputPixelFormat::BGRA8)) {
                 uint8_t* p = row + static_cast<size_t>(x) * 4;
                 p[0] = white ? 255 : c[2]; p[1] = white ? 255 : c[1]; p[2] = white ? 255 : c[0]; p[3] = 255;
+            } else if (d.pixel_format == static_cast<uint32_t>(OutputPixelFormat::RGB10)) {
+                // R in the low bits, then G, then B; 8-bit bar values scaled to 10.
+                const uint32_t r = (white ? 255u : c[0]) * 1023u / 255u, g = (white ? 255u : c[1]) * 1023u / 255u,
+                               b = (white ? 255u : c[2]) * 1023u / 255u;
+                const uint32_t w = r | (g << 10) | (b << 20) | (3u << 30);
+                std::memcpy(row + static_cast<size_t>(x) * 4, &w, 4);
             } else {
                 // RGBA16F: half floats. 1.0 = 0x3C00, 0.0 = 0.
                 auto* p = reinterpret_cast<uint16_t*>(row + static_cast<size_t>(x) * 8);

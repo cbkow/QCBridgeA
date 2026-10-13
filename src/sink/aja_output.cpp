@@ -67,6 +67,8 @@ struct AjaOutput::Impl {
     NTV2PixelFormat  pf = NTV2_FBF_ARGB;      // B,G,R,A in memory: the bus's BGRA8 (PLAN A4)
     NTV2FrameRate    frameRate = NTV2_FRAMERATE_UNKNOWN;
     bool             hdmi = false;
+    bool             hdmiRgb = true;
+    bool             tenBit = false;
     bool             configured = false;
     bool             running = false;
     uint32_t         width = 0, height = 0, frameBytes = 0, rowBytes = 0, audioCh = 0;
@@ -174,11 +176,13 @@ void AjaOutput::close()
     m->card.Close();
 }
 
-bool AjaOutput::configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen,
-                          uint32_t audioChannels, bool hdmi, uint32_t cardFrames, std::string *err)
+bool AjaOutput::configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen, bool tenBit,
+                          uint32_t audioChannels, bool hdmi, HdmiColor hdmiColor, uint32_t cardFrames, std::string *err)
 {
     if (!m->acquired) { if (err) *err = "device not open"; return false; }
     m->stopCirculate();
+    // PLAN A4: the bus's RGB10 is the card's 10-bit RGB word for word; BGRA8 is ARGB (B,G,R,A).
+    m->pf = tenBit ? NTV2_FBF_10BIT_RGB : NTV2_FBF_ARGB;
 
     const NTV2VideoFormat vf = pickFormat(width, height, fpsNum, fpsDen);
     if (vf == NTV2_FORMAT_UNKNOWN) {
@@ -192,7 +196,7 @@ bool AjaOutput::configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint
         return false;
     }
     if (!m->card.features().CanDoFrameBufferFormat(m->pf)) {
-        if (err) *err = m->devName + " has no 8-bit ARGB frame store";
+        if (err) *err = m->devName + (tenBit ? " has no 10-bit RGB frame store" : " has no 8-bit ARGB frame store");
         return false;
     }
 
@@ -221,17 +225,28 @@ bool AjaOutput::configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint
         m->card.SetHDMIOutAudioSource8Channel(NTV2_AudioChannel1_8, m->audioSys);
     }
 
-    // Routing (the SDK's player demo, RGB branch): frame store → CSC → SDI, and HDMI from the same CSC.
+    // Routing (the SDK's player demo, RGB branch): frame store → CSC → SDI as
+    // Rec.709 YCbCr 4:2:2 from full-range RGB. HDMI takes the frame store's RGB
+    // straight (nothing re-matrixed or subsampled on the way to a QC monitor),
+    // or the CSC's YCbCr when asked.
     const bool canVerify = m->card.features().HasCrosspointConnectROM();
     const NTV2OutputXptID cscVidOut = ::GetCSCOutputXptFromChannel(m->ch, false /*key*/, false /*RGB out*/);
     const NTV2OutputXptID fsVidOut  = ::GetFrameStoreOutputXptFromChannel(m->ch, true /*RGB*/, false);
     const NTV2InputXptID  cscIn     = ::GetCSCInputXptFromChannel(m->ch, false);
     m->card.ClearRouting();
     m->card.Connect(cscIn, fsVidOut, canVerify);
+    m->card.SetColorSpaceMatrixSelect(NTV2_Rec709Matrix, m->ch);
+    m->card.SetColorSpaceRGBBlackRange(NTV2_CSC_RGB_RANGE_FULL, m->ch);
     if (m->card.features().HasBiDirectionalSDI()) m->card.SetSDITransmitEnable(m->ch, true);
     m->card.Connect(::GetSDIOutputInputXpt(m->ch, false), cscVidOut, canVerify);
     m->card.SetSDIOutputStandard(m->ch, ::GetNTV2StandardFromVideoFormat(vf));
-    if (haveHdmi) m->card.Connect(::GetOutputDestInputXpt(NTV2_OUTPUTDESTINATION_HDMI1), cscVidOut, canVerify);
+    if (haveHdmi) {
+        const bool rgb = hdmiColor == HdmiColor::Rgb;
+        m->card.Connect(::GetOutputDestInputXpt(NTV2_OUTPUTDESTINATION_HDMI1), rgb ? fsVidOut : cscVidOut, canVerify);
+        m->card.SetHDMIOutColorSpace(rgb ? NTV2_HDMIColorSpaceRGB : NTV2_HDMIColorSpaceYCbCr);
+        m->card.SetHDMIOutRange(rgb ? NTV2_HDMIRangeFull : NTV2_HDMIRangeSMPTE);
+        m->card.SetHDMIOutBitDepth(tenBit ? NTV2_HDMI10Bit : NTV2_HDMI8Bit);
+    }
 
     // Host buffers: page-aligned and locked for DMA.
     const NTV2FormatDescriptor fd(vf, m->pf, NTV2_VANCMODE_OFF);
@@ -261,6 +276,8 @@ bool AjaOutput::configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint
 
     m->vf = vf;
     m->hdmi = haveHdmi;
+    m->hdmiRgb = hdmiColor == HdmiColor::Rgb;
+    m->tenBit = tenBit;
     m->width = width; m->height = height;
     m->frameRate = ::GetNTV2FrameRateFromVideoFormat(vf);
     m->fmtName = ::NTV2VideoFormatToString(vf, true);
@@ -340,7 +357,8 @@ std::string AjaOutput::describe() const
 {
     if (!m->acquired) return "no device";
     if (!m->configured) return m->devName;
-    return m->devName + " " + m->fmtName + (m->hdmi ? ", SDI + HDMI" : ", SDI");
+    return m->devName + " " + m->fmtName + (m->tenBit ? " 10-bit" : " 8-bit") + ", SDI"
+         + (m->hdmi ? (m->hdmiRgb ? " + HDMI RGB" : " + HDMI YCbCr") : "");
 }
 
 AjaOutputStats AjaOutput::stats()

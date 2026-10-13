@@ -31,6 +31,8 @@ struct SinkConfig {
     uint32_t    layers     = qcbae::kOutputLayerGuides | qcbae::kOutputLayerAnnotations;
     qcbae::OutputContent content = qcbae::OutputContent::Composite;
     bool        hdmi       = true;       // also drive the HDMI output
+    bool        hdmiRgb    = true;       // HDMI as RGB full range (else YCbCr from the CSC)
+    bool        tenBit     = true;       // ask for RGB10; falls back to BGRA8 when QCView refuses
     uint32_t    audioChannels = 8;       // embedded channels (stereo in 1-2, the rest silent)
     uint32_t    cardFrames = 4;          // AutoCirculate buffers on the card
     uint32_t    fallbackFpsNum = 25, fallbackFpsDen = 1;   // when the stamp has no rate
@@ -40,6 +42,7 @@ struct SinkStats {
     std::string state;          // "waiting for QCView", "attached", "AJA: ...", "sending", "quitting"
     std::string reply;          // the producer's message
     std::string card;           // AjaOutput::describe()
+    std::string format;         // the bus format accepted: "RGB10" or "BGRA8"
     uint64_t    frames = 0;     // new pictures taken off the ring
     uint64_t    transfers = 0;  // frames handed to the card (new + repeated)
     uint64_t    audioPackets = 0, audioGaps = 0, audioDropped = 0;

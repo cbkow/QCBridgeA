@@ -33,17 +33,21 @@ public:
     void close();
     bool isOpen() const;
 
+    enum class HdmiColor { Rgb, YCbCr };
+
     // Picks the NTV2 video format for the raster and rate (1080p and 720p
-    // progressive, see PLAN A3), the ARGB frame store (B,G,R,A in memory),
-    // `audioChannels` embedded channels (2..16; HDMI carries the first 8),
-    // routes frame store → CSC → SDI 1 (+ HDMI 1 when `hdmi`), and
-    // initialises AutoCirculate with `cardFrames` buffers. Stops any
-    // previous session first.
-    bool configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen,
-                   uint32_t audioChannels, bool hdmi, uint32_t cardFrames, std::string *err);
+    // progressive, see PLAN A3), the frame store (10-bit RGB for the bus's
+    // RGB10, else 8-bit ARGB; both full range), `audioChannels` embedded
+    // channels (2..16; HDMI carries the first 8), routes frame store → CSC →
+    // SDI 1 and, when `hdmi`, HDMI 1 — fed the frame store's RGB directly
+    // (HdmiColor::Rgb, full range, 10-bit when the picture is) or the CSC's
+    // YCbCr — and initialises AutoCirculate with `cardFrames` buffers.
+    // Stops any previous session first.
+    bool configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen, bool tenBit,
+                   uint32_t audioChannels, bool hdmi, HdmiColor hdmiColor, uint32_t cardFrames, std::string *err);
 
     // Copies one picture (width*height*4 bytes, rows `bytesPerRow` apart,
-    // B,G,R,A) into the DMA buffer. The next transfer() sends it; until a
+    // in the configured format) into the DMA buffer. The next transfer() sends it; until a
     // new one is staged every transfer repeats it (PLAN A2).
     void stageFrame(const void *pixels, uint32_t bytesPerRow);
 

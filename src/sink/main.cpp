@@ -3,7 +3,8 @@
 //
 //   QCBridgeA [--id aja] [--device 0] [--raster 1920x1080]
 //             [--content composite|a|b] [--no-guides] [--no-annotations]
-//             [--no-hdmi] [--audio-channels 8] [--card-frames 4] [--fps 25]
+//             [--no-hdmi] [--hdmi-color rgb|ycbcr] [--8bit]
+//             [--audio-channels 8] [--card-frames 4] [--fps 25]
 //             [--seconds N] [--version]
 //
 // Settings are arguments (the manifest's); --seconds quits after N seconds
@@ -45,6 +46,8 @@ void usage()
                 "  --no-guides          do not ask for safety guides\n"
                 "  --no-annotations     do not ask for note strokes\n"
                 "  --no-hdmi            SDI only\n"
+                "  --hdmi-color <c>     rgb (default, full range from the frame store) or ycbcr (from the CSC)\n"
+                "  --8bit               ask QCView for BGRA8 instead of RGB10\n"
                 "  --audio-channels N   embedded channels, 2..16 (default 8)\n"
                 "  --card-frames N      AutoCirculate buffers, 3..16 (default 4)\n"
                 "  --fps N              rate when the stamp has none (default 25; 23.976, 29.97 and 59.94 accepted)\n"
@@ -71,6 +74,8 @@ int main(int argc, char **argv)
         else if (a == "--no-guides")      cfg.layers &= ~qcbae::kOutputLayerGuides;
         else if (a == "--no-annotations") cfg.layers &= ~qcbae::kOutputLayerAnnotations;
         else if (a == "--no-hdmi")        cfg.hdmi = false;
+        else if (a == "--hdmi-color")     { const std::string c = next("--hdmi-color"); cfg.hdmiRgb = c != "ycbcr"; }
+        else if (a == "--8bit")           cfg.tenBit = false;
         else if (a == "--audio-channels") cfg.audioChannels = uint32_t(std::strtoul(next("--audio-channels").c_str(), nullptr, 10));
         else if (a == "--card-frames")    cfg.cardFrames = uint32_t(std::strtoul(next("--card-frames").c_str(), nullptr, 10));
         else if (a == "--fps")            { const double f = std::strtod(next("--fps").c_str(), nullptr);

@@ -136,10 +136,13 @@ void BusSink::run()
                     haveAudio ? "open" : "absent");
 
         ring.attach(OutputRing::now_ns());
+        // RGB10 first (PLAN A4); a QCView that only speaks BGRA8 refuses the
+        // format and the request is repeated at 8 bits.
+        OutputPixelFormat wantFmt = m_cfg.tenBit ? OutputPixelFormat::RGB10 : OutputPixelFormat::BGRA8;
         OutputRequest req {};
         req.protocol_version = kOutputDescVersion;
         req.width = m_cfg.width;  req.height = m_cfg.height;
-        req.pixel_format = static_cast<uint32_t>(OutputPixelFormat::BGRA8);
+        req.pixel_format = static_cast<uint32_t>(wantFmt);
         req.transfer     = static_cast<uint32_t>(OutputTransfer::SdrRec709);
         req.fit          = static_cast<uint32_t>(OutputFit::Letterbox);
         req.content      = static_cast<uint32_t>(m_cfg.content);
@@ -159,6 +162,7 @@ void BusSink::run()
         std::string why, lastStatus, cardErr;
         std::future<bool> opening;
         bool configured = false;
+        OutputPixelFormat gotFmt = OutputPixelFormat::Unspecified, cfgFmt = OutputPixelFormat::Unspecified;
         uint32_t curNum = 0, curDen = 0, pendNum = 0, pendDen = 0, pendCount = 0;
         uint32_t perFrame = 0;   // nominal audio frames per video frame, for the queue bounds
         queue.clear();
@@ -175,12 +179,16 @@ void BusSink::run()
 
         auto configureFor = [&](uint32_t num, uint32_t den) -> bool {
             std::string err;
-            if (!m_aja.configure(m_cfg.width, m_cfg.height, num, den, m_cfg.audioChannels, m_cfg.hdmi, m_cfg.cardFrames, &err)) {
+            const bool tenBit = gotFmt == OutputPixelFormat::RGB10;
+            if (!m_aja.configure(m_cfg.width, m_cfg.height, num, den, tenBit, m_cfg.audioChannels, m_cfg.hdmi,
+                                 m_cfg.hdmiRgb ? AjaOutput::HdmiColor::Rgb : AjaOutput::HdmiColor::YCbCr,
+                                 m_cfg.cardFrames, &err)) {
                 configured = false;
                 status("AJA: " + err);
                 return false;
             }
             configured = true;
+            cfgFmt = gotFmt;
             curNum = num; curDen = den;
             pendCount = 0;
             perFrame = uint32_t(std::lround(48000.0 * den / num));
@@ -199,11 +207,27 @@ void BusSink::run()
             OutputReply reply {};
             if (ring.read_reply(&reply, &replyGen)) {
                 accepted = reply.accepted != 0;
-                std::lock_guard<std::mutex> lk(m_statsMutex);
-                m_stats.reply = reply.message;
-                m_stats.width = reply.width; m_stats.height = reply.height;
-                if (accepted) std::printf("QCBridgeA: accepted %ux%u \"%s\"\n", reply.width, reply.height, reply.message);
-                else        { std::printf("QCBridgeA: REFUSED \"%s\"\n", reply.message); m_stats.state = std::string("refused: ") + reply.message; }
+                if (accepted) {
+                    gotFmt = static_cast<OutputPixelFormat>(reply.pixel_format);
+                    if (gotFmt != OutputPixelFormat::RGB10 && gotFmt != OutputPixelFormat::BGRA8) accepted = false;
+                }
+                const bool fallBack = !accepted && wantFmt == OutputPixelFormat::RGB10
+                                   && static_cast<OutputRefusal>(reply.refusal) == OutputRefusal::UnsupportedFormat;
+                {
+                    std::lock_guard<std::mutex> lk(m_statsMutex);
+                    m_stats.reply = reply.message;
+                    m_stats.width = reply.width; m_stats.height = reply.height;
+                    m_stats.format = accepted ? (gotFmt == OutputPixelFormat::RGB10 ? "RGB10" : "BGRA8") : "";
+                    if (accepted) std::printf("QCBridgeA: accepted %ux%u \"%s\"\n", reply.width, reply.height, reply.message);
+                    else        { std::printf("QCBridgeA: REFUSED \"%s\"%s\n", reply.message, fallBack ? " - asking for BGRA8" : "");
+                                  m_stats.state = std::string("refused: ") + reply.message; }
+                }
+                if (fallBack) {
+                    wantFmt = OutputPixelFormat::BGRA8;
+                    req.pixel_format = static_cast<uint32_t>(wantFmt);
+                    ring.write_request(req);
+                }
+                if (configured && accepted && gotFmt != cfgFmt) { m_aja.close(); configured = false; }   // depth changed: start over
             }
 
             // ---- audio: every packet into the queue (always, so the ring never laps us) ----
@@ -258,7 +282,7 @@ void BusSink::run()
             OutputFrameDesc d {};
             const void *px = nullptr;
             if (ring.acquire_latest(&lastSeen, &d, &px)) {
-                bool take = d.pixel_format == static_cast<uint32_t>(OutputPixelFormat::BGRA8)
+                bool take = d.pixel_format == static_cast<uint32_t>(gotFmt)
                          && d.width == m_cfg.width && d.height == m_cfg.height;
                 if (take) {
                     uint32_t num = d.source_fps_num, den = d.source_fps_den;
