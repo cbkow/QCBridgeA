@@ -428,6 +428,11 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "usage: qcvo-probe consume|produce --id <id> [options]  (see the header of main.cpp)\n");
         return 2;
     }
+#if defined(_WIN32)
+    // The UCRT fail-fasts (0xC0000409) on _IOLBF with a zero size: unbuffered there.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+#else
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
+#endif
     return a.cmd == "consume" ? consume(a) : produce(a);
 }
