@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <future>
 #include <vector>
 
 using namespace qcbae;
@@ -156,6 +157,7 @@ void BusSink::run()
         AudioSession session {};
         if (haveAudio) audio.skip_to_latest(&aSeen);
         std::string why, lastStatus, cardErr;
+        std::future<bool> opening;
         bool configured = false;
         uint32_t curNum = 0, curDen = 0, pendNum = 0, pendDen = 0, pendCount = 0;
         uint32_t perFrame = 0;   // nominal audio frames per video frame, for the queue bounds
@@ -235,10 +237,18 @@ void BusSink::run()
 
             // ---- the card: open it (retrying while another application holds it) ----
             if (!m_aja.isOpen()) {
-                if (now - lastOpenTry > 2000000000LL) {
+                // Acquiring a device another application holds takes the driver
+                // about a second, so the attempt runs on its own thread and the
+                // heartbeat keeps going here.
+                if (opening.valid()) {
+                    if (opening.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                        const bool ok = opening.get();
+                        if (ok) status("AJA " + m_aja.describe() + ", waiting for the first frame");
+                        else    status("AJA: " + cardErr);
+                    }
+                } else if (now - lastOpenTry > 2000000000LL) {
                     lastOpenTry = now;
-                    if (m_aja.open(m_cfg.device, &cardErr)) status("AJA " + m_aja.describe() + " · waiting for the first frame");
-                    else status("AJA: " + cardErr);
+                    opening = std::async(std::launch::async, [this, &cardErr] { return m_aja.open(m_cfg.device, &cardErr); });
                 }
                 sleep_ms(1);
                 continue;
@@ -302,14 +312,14 @@ void BusSink::run()
                     m_stats.newFps = double(frames - framesAtSecond);
                     m_stats.state = as.running ? "sending" : "filling the card";
                 }
-                std::printf("QCBridgeA: %s · %.0f/s to the card, %.0f/s new · card level %u, dropped %llu, bad %llu\n",
+                std::printf("QCBridgeA: %s, %.0f/s to the card, %.0f/s new, card level %u, dropped %llu, bad %llu\n",
                             m_aja.formatName().c_str(), double(transfers - transfersAtSecond), double(frames - framesAtSecond),
                             as.bufferLevel, (unsigned long long)as.cardDropped, (unsigned long long)as.badTransfers);
                 std::fflush(stdout);
                 transfersAtSecond = transfers; framesAtSecond = frames;
             }
         }
-        if (m_stop.load()) break;
+        if (m_stop.load()) { if (opening.valid()) opening.wait(); break; }
 
         const bool launched = ring.launched_by_producer();
         std::printf("QCBridgeA: %s\n", why.c_str());
@@ -317,6 +327,7 @@ void BusSink::run()
             std::lock_guard<std::mutex> lk(m_statsMutex);
             m_stats.producerAlive = false;
         }
+        if (opening.valid()) opening.wait();
         m_aja.close();   // release the card for whoever wants it next (PLAN A6)
         // Explicit close so the pid leaves the header before QCView's next poll.
         ring = OutputRing();

@@ -12,6 +12,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <string>
+#if defined(_WIN32)
+#  include <windows.h>
+#endif
 
 namespace {
 
@@ -50,6 +54,10 @@ NTV2VideoFormat pickFormat(uint32_t w, uint32_t h, uint32_t num, uint32_t den)
 } // namespace
 
 struct AjaOutput::Impl {
+    // Who holds the device: the registered application code and, when the
+    // pid resolves, the process name.
+    std::string ownerName();
+
     CNTV2Card        card;
     bool             acquired = false;
     NTV2EveryFrameTaskMode savedTaskMode = NTV2_TASK_MODE_INVALID;
@@ -78,6 +86,36 @@ struct AjaOutput::Impl {
     }
 };
 
+std::string AjaOutput::Impl::ownerName()
+{
+    ULWord appType = 0;
+    int32_t pid = 0;
+    if (!card.GetStreamingApplication(appType, pid) || !appType) return "another application";
+    char code[5] = { char((appType >> 24) & 0xFF), char((appType >> 16) & 0xFF), char((appType >> 8) & 0xFF), char(appType & 0xFF), 0 };
+    for (char &c : code) if (c && (c < 0x20 || c > 0x7E)) c = '?';
+    std::string who = std::string("'") + code + "'";
+#if defined(_WIN32)
+    if (pid > 0) {
+        HANDLE h = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, DWORD(pid));
+        if (h) {
+            wchar_t path[MAX_PATH];
+            DWORD n = MAX_PATH;
+            if (::QueryFullProcessImageNameW(h, 0, path, &n)) {
+                std::wstring ws(path, n);
+                const auto slash = ws.find_last_of(L"\\/");
+                const std::wstring base = slash == std::wstring::npos ? ws : ws.substr(slash + 1);
+                std::string name;
+                for (wchar_t c : base) name += (c < 0x80) ? char(c) : '?';
+                who = name;
+            }
+            ::CloseHandle(h);
+        }
+    }
+#endif
+    if (pid > 0) who += " (pid " + std::to_string(pid) + ")";
+    return who;
+}
+
 AjaOutput::AjaOutput() : m(std::make_unique<Impl>()) {}
 AjaOutput::~AjaOutput() { close(); }
 
@@ -86,7 +124,13 @@ bool AjaOutput::isOpen() const { return m->acquired; }
 bool AjaOutput::open(const std::string &deviceSpec, std::string *err)
 {
     close();
-    if (!CNTV2DeviceScanner::GetFirstDeviceFromArgument(deviceSpec, m->card)) {
+    // A bare index opens directly (the scanner's full enumeration takes about
+    // a second, long enough to miss a heartbeat); names and serials go through it.
+    bool opened = false;
+    if (!deviceSpec.empty() && deviceSpec.find_first_not_of("0123456789") == std::string::npos)
+        opened = m->card.Open(UWord(std::stoul(deviceSpec)));
+    if (!opened) opened = CNTV2DeviceScanner::GetFirstDeviceFromArgument(deviceSpec, m->card);
+    if (!opened) {
         if (err) *err = deviceSpec == "0" ? "no AJA device" : "no AJA device matching '" + deviceSpec + "'";
         return false;
     }
@@ -102,7 +146,8 @@ bool AjaOutput::open(const std::string &deviceSpec, std::string *err)
     m->card.GetEveryFrameServices(m->savedTaskMode);
     // PLAN A6: exclusive use, the way AJA's own applications take a device.
     if (!m->card.AcquireStreamForApplication(kAppSignature, int32_t(AJAProcess::GetPid()))) {
-        if (err) *err = m->devName + " is in use by another application";
+        if (err) *err = m->devName + " is in use by " + m->ownerName();
+        m->card.Close();
         return false;
     }
     m->acquired = true;
@@ -295,7 +340,7 @@ std::string AjaOutput::describe() const
 {
     if (!m->acquired) return "no device";
     if (!m->configured) return m->devName;
-    return m->devName + " · " + m->fmtName + (m->hdmi ? " · SDI + HDMI" : " · SDI");
+    return m->devName + " " + m->fmtName + (m->hdmi ? ", SDI + HDMI" : ", SDI");
 }
 
 AjaOutputStats AjaOutput::stats()

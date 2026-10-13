@@ -103,7 +103,7 @@ int main(int argc, char **argv)
     sink.stop();
     aja.close();
     const SinkStats s = sink.stats();
-    std::printf("QCBridgeA: done — %llu pictures, %llu transfers, %llu audio packets (%llu gaps, %llu dropped, "
+    std::printf("QCBridgeA: done - %llu pictures, %llu transfers, %llu audio packets (%llu gaps, %llu dropped, "
                 "%llu silence frames, %llu trimmed)\n",
                 (unsigned long long)s.frames, (unsigned long long)s.transfers, (unsigned long long)s.audioPackets,
                 (unsigned long long)s.audioGaps, (unsigned long long)s.audioDropped,
