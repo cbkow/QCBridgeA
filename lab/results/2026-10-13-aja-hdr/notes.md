@@ -47,6 +47,38 @@ The PQ picture sits where an SDR source belongs in an HDR 1000-nit view
 container demands; the HLG picture peaks at the 75 % reference. The SDR
 output alongside is unchanged.
 
+## Pass-through, and the box (QCView 08c24081, b297cc6f)
+
+Chris, seeing the first PQ run on the monitor: PQ and HLG must also serve
+the Premiere and After Effects feeds, which arrive already encoded — so
+the transfer is a dropdown that says what the wire is told and signals,
+not a conversion we impose. The view became optional: **"(as displayed)"**
+(the default) sends the picture as the viewport shows it, tagged and
+signalled; a named view on the config's Rec.2100 display re-renders the
+live chain through it. No refusals for a config without such a display.
+
+Two things found on the box on the way: the D3D11 OCIO renderer builds
+every chain on a worker thread, so the first frame an HDR output published
+was the raw picture and, the clip paused, nothing republished it — an HDR
+output now publishes nothing until its chain exists; and a dev run's
+default OCIO config is Blender 5.2 (the ACES view names used in the rig
+do not exist there), while the box's `$OCIO` points at a studio config
+with no Rec.2100 display at all — the rig switches to ACES 2.0 and
+re-engages (switching the config disengages the chain).
+
+D3D11 (box), the same bars clip, four 10-bit consumers on one QCView:
+
+| output | yellow bar (x = 840) | blue bar (x = 1080) | max |
+|---|---|---|---|
+| SDR Rec.709 | 1023, 963, 0 | 0, 59, 1023 | 1023 |
+| PQ, view "ACES 2.0 - HDR 1000 nits (P3 D65)" | 517, 512, 325 → 97, 93, 12 nits | 231, 157, 490 → 4, 1, 75 nits | 551 |
+| HLG, same view | 643, 631, 243 | 163, 89, 680 | 759 |
+| PQ, as displayed | 1023, 963, 0 (the SDR picture, tagged PQ) | 0, 59, 1023 | 1023 |
+
+Metal gives the same numbers to within a code value. Then QCView itself
+drove the sink at PQ through that view with P3-D65 mastering metadata, 30
+s on the T-TAP Pro; the picture reached Chris's monitor (his word: "wow").
+
 ## The sink (QCBridgeA 6cba5de)
 
 Asks for transfer 0 (`--transfer sdr|pq|hlg` to force), takes the reply's
