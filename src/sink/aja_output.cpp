@@ -1,0 +1,311 @@
+// SPDX-License-Identifier: MIT
+#include "aja_output.h"
+
+#include <ntv2card.h>
+#include <ntv2devicescanner.h>
+#include <ntv2formatdescriptor.h>
+#include <ntv2publicinterface.h>
+#include <ntv2signalrouter.h>
+#include <ntv2utils.h>
+#include <ajabase/system/process.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+namespace {
+
+const ULWord kAppSignature = NTV2_FOURCC('Q', 'C', 'B', 'A');
+
+// The largest audio chunk one frame can carry: 2002 sample frames at
+// 23.976 fps, 16 channels, 4 bytes each; rounded up to pages.
+constexpr uint32_t kAudioBufferBytes = 4096u * 16u * 4u;
+
+bool rateIs(double a, double b) { return std::fabs(a - b) < 0.02; }
+
+// PLAN A3: progressive 1080 and 720 at the rates QCView produces.
+NTV2VideoFormat pickFormat(uint32_t w, uint32_t h, uint32_t num, uint32_t den)
+{
+    if (!num || !den) return NTV2_FORMAT_UNKNOWN;
+    const double fps = double(num) / double(den);
+    if (w == 1920 && h == 1080) {
+        if (rateIs(fps, 23.976)) return NTV2_FORMAT_1080p_2398;
+        if (rateIs(fps, 24.0))   return NTV2_FORMAT_1080p_2400;
+        if (rateIs(fps, 25.0))   return NTV2_FORMAT_1080p_2500;
+        if (rateIs(fps, 29.97))  return NTV2_FORMAT_1080p_2997;
+        if (rateIs(fps, 30.0))   return NTV2_FORMAT_1080p_3000;
+        if (rateIs(fps, 50.0))   return NTV2_FORMAT_1080p_5000_A;
+        if (rateIs(fps, 59.94))  return NTV2_FORMAT_1080p_5994_A;
+        if (rateIs(fps, 60.0))   return NTV2_FORMAT_1080p_6000_A;
+    } else if (w == 1280 && h == 720) {
+        if (rateIs(fps, 23.976)) return NTV2_FORMAT_720p_2398;
+        if (rateIs(fps, 25.0))   return NTV2_FORMAT_720p_2500;
+        if (rateIs(fps, 50.0))   return NTV2_FORMAT_720p_5000;
+        if (rateIs(fps, 59.94))  return NTV2_FORMAT_720p_5994;
+        if (rateIs(fps, 60.0))   return NTV2_FORMAT_720p_6000;
+    }
+    return NTV2_FORMAT_UNKNOWN;
+}
+
+} // namespace
+
+struct AjaOutput::Impl {
+    CNTV2Card        card;
+    bool             acquired = false;
+    NTV2EveryFrameTaskMode savedTaskMode = NTV2_TASK_MODE_INVALID;
+    NTV2Channel      ch = NTV2_CHANNEL1;
+    NTV2AudioSystem  audioSys = NTV2_AUDIOSYSTEM_1;
+    NTV2VideoFormat  vf = NTV2_FORMAT_UNKNOWN;
+    NTV2PixelFormat  pf = NTV2_FBF_ARGB;      // B,G,R,A in memory: the bus's BGRA8 (PLAN A4)
+    NTV2FrameRate    frameRate = NTV2_FRAMERATE_UNKNOWN;
+    bool             hdmi = false;
+    bool             configured = false;
+    bool             running = false;
+    uint32_t         width = 0, height = 0, frameBytes = 0, rowBytes = 0, audioCh = 0;
+    uint32_t         cadence = 0;
+    uint64_t         goodXfers = 0;
+    NTV2Buffer       videoBuf, audioBuf;
+    std::string      fmtName, devName;
+    AjaOutputStats   stats;
+
+    void stopCirculate()
+    {
+        if (!configured) return;
+        card.AutoCirculateStop(ch);
+        card.AutoCirculateFlush(ch);
+        running = false;
+        stats.running = false;
+    }
+};
+
+AjaOutput::AjaOutput() : m(std::make_unique<Impl>()) {}
+AjaOutput::~AjaOutput() { close(); }
+
+bool AjaOutput::isOpen() const { return m->acquired; }
+
+bool AjaOutput::open(const std::string &deviceSpec, std::string *err)
+{
+    close();
+    if (!CNTV2DeviceScanner::GetFirstDeviceFromArgument(deviceSpec, m->card)) {
+        if (err) *err = deviceSpec == "0" ? "no AJA device" : "no AJA device matching '" + deviceSpec + "'";
+        return false;
+    }
+    m->devName = ::NTV2DeviceIDToString(m->card.GetDeviceID(), true);
+    if (!m->card.IsDeviceReady(false)) {
+        if (err) *err = m->devName + " is not ready";
+        return false;
+    }
+    if (!m->card.features().CanDoPlayback()) {
+        if (err) *err = m->devName + " has no outputs";
+        return false;
+    }
+    m->card.GetEveryFrameServices(m->savedTaskMode);
+    // PLAN A6: exclusive use, the way AJA's own applications take a device.
+    if (!m->card.AcquireStreamForApplication(kAppSignature, int32_t(AJAProcess::GetPid()))) {
+        if (err) *err = m->devName + " is in use by another application";
+        return false;
+    }
+    m->acquired = true;
+    m->card.SetEveryFrameServices(NTV2_OEM_TASKS);
+    if (m->card.features().CanDoMultiFormat()) m->card.SetMultiFormatMode(false);
+    if (m->ch == NTV2_CHANNEL1 && !m->card.features().CanDoFrameStore1Display()) m->ch = NTV2_CHANNEL2;
+    return true;
+}
+
+void AjaOutput::close()
+{
+    if (!m->card.IsOpen()) return;
+    m->stopCirculate();
+    if (m->configured) {
+        m->card.UnsubscribeOutputVerticalEvent(m->ch);
+        m->card.DMABufferUnlockAll();
+        m->configured = false;
+    }
+    if (m->acquired) {
+        m->card.ReleaseStreamForApplication(kAppSignature, int32_t(AJAProcess::GetPid()));
+        if (NTV2_IS_VALID_TASK_MODE(m->savedTaskMode)) m->card.SetEveryFrameServices(m->savedTaskMode);
+        m->acquired = false;
+    }
+    m->card.Close();
+}
+
+bool AjaOutput::configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen,
+                          uint32_t audioChannels, bool hdmi, uint32_t cardFrames, std::string *err)
+{
+    if (!m->acquired) { if (err) *err = "device not open"; return false; }
+    m->stopCirculate();
+
+    const NTV2VideoFormat vf = pickFormat(width, height, fpsNum, fpsDen);
+    if (vf == NTV2_FORMAT_UNKNOWN) {
+        char buf[96];
+        std::snprintf(buf, sizeof buf, "no SDI format for %ux%u at %u/%u", width, height, fpsNum, fpsDen);
+        if (err) *err = buf;
+        return false;
+    }
+    if (!m->card.features().CanDoVideoFormat(vf)) {
+        if (err) *err = m->devName + " cannot output " + ::NTV2VideoFormatToString(vf, true);
+        return false;
+    }
+    if (!m->card.features().CanDoFrameBufferFormat(m->pf)) {
+        if (err) *err = m->devName + " has no 8-bit ARGB frame store";
+        return false;
+    }
+
+    // Video: the frame store and its output interrupt.
+    m->card.EnableChannel(m->ch);
+    m->card.SetVANCMode(NTV2_VANCMODE_OFF, m->ch);
+    m->card.SetVideoFormat(vf, false, false, m->ch);
+    m->card.SetFrameBufferFormat(m->ch, m->pf);
+    m->card.SubscribeOutputVerticalEvent(m->ch);
+    m->card.SetReference(NTV2_REFERENCE_FREERUN);
+
+    // Audio: 48 kHz, `audioChannels` embedded on SDI, the first eight on HDMI (PLAN A5).
+    const uint32_t maxCh = m->card.features().GetMaxAudioChannels();
+    m->audioCh = std::clamp<uint32_t>(audioChannels, 2u, std::max<uint32_t>(2u, maxCh));
+    m->audioSys = m->card.features().GetNumAudioSystems() > 1 ? ::NTV2ChannelToAudioSystem(m->ch) : NTV2_AUDIOSYSTEM_1;
+    m->card.SetNumberAudioChannels(m->audioCh, m->audioSys);
+    m->card.SetAudioRate(NTV2_AUDIO_48K, m->audioSys);
+    m->card.SetAudioBufferSize(NTV2_AUDIO_BUFFER_BIG, m->audioSys);
+    m->card.SetSDIOutputAudioSystem(m->ch, m->audioSys);
+    m->card.SetSDIOutputDS2AudioSystem(m->ch, m->audioSys);
+    m->card.SetAudioLoopBack(NTV2_AUDIO_LOOPBACK_OFF, m->audioSys);
+    const bool haveHdmi = hdmi && m->card.features().GetNumHDMIVideoOutputs() > 0;
+    if (haveHdmi) {
+        m->card.SetHDMIOutAudioRate(NTV2_AUDIO_48K);
+        m->card.SetHDMIOutAudioFormat(NTV2_AUDIO_FORMAT_LPCM);
+        m->card.SetHDMIOutAudioSource8Channel(NTV2_AudioChannel1_8, m->audioSys);
+    }
+
+    // Routing (the SDK's player demo, RGB branch): frame store → CSC → SDI, and HDMI from the same CSC.
+    const bool canVerify = m->card.features().HasCrosspointConnectROM();
+    const NTV2OutputXptID cscVidOut = ::GetCSCOutputXptFromChannel(m->ch, false /*key*/, false /*RGB out*/);
+    const NTV2OutputXptID fsVidOut  = ::GetFrameStoreOutputXptFromChannel(m->ch, true /*RGB*/, false);
+    const NTV2InputXptID  cscIn     = ::GetCSCInputXptFromChannel(m->ch, false);
+    m->card.ClearRouting();
+    m->card.Connect(cscIn, fsVidOut, canVerify);
+    if (m->card.features().HasBiDirectionalSDI()) m->card.SetSDITransmitEnable(m->ch, true);
+    m->card.Connect(::GetSDIOutputInputXpt(m->ch, false), cscVidOut, canVerify);
+    m->card.SetSDIOutputStandard(m->ch, ::GetNTV2StandardFromVideoFormat(vf));
+    if (haveHdmi) m->card.Connect(::GetOutputDestInputXpt(NTV2_OUTPUTDESTINATION_HDMI1), cscVidOut, canVerify);
+
+    // Host buffers: page-aligned and locked for DMA.
+    const NTV2FormatDescriptor fd(vf, m->pf, NTV2_VANCMODE_OFF);
+    if (!fd.IsValid() || fd.GetRasterWidth() != width || fd.GetFullRasterHeight() != height) {
+        if (err) *err = "format descriptor mismatch for " + ::NTV2VideoFormatToString(vf, true);
+        return false;
+    }
+    m->frameBytes = fd.GetTotalBytes();
+    m->rowBytes   = fd.GetBytesPerRow();
+    m->card.DMABufferUnlockAll();
+    if (!m->videoBuf.Allocate(m->frameBytes, true) || !m->audioBuf.Allocate(kAudioBufferBytes, true)) {
+        if (err) *err = "could not allocate the DMA buffers";
+        return false;
+    }
+    m->videoBuf.Fill(uint32_t(0));   // black until the first frame is staged
+    m->audioBuf.Fill(uint32_t(0));
+    m->card.DMABufferLock(m->videoBuf, true);
+    m->card.DMABufferLock(m->audioBuf, true);
+
+    // AutoCirculate over `cardFrames` on-card buffers (PLAN A2).
+    const UWord frames = UWord(std::clamp<uint32_t>(cardFrames, 3u, 16u));
+    m->card.AutoCirculateStop(m->ch);
+    if (!m->card.AutoCirculateInitForOutput(m->ch, frames, m->audioSys, 0)) {
+        if (err) *err = "AutoCirculateInitForOutput failed";
+        return false;
+    }
+
+    m->vf = vf;
+    m->hdmi = haveHdmi;
+    m->width = width; m->height = height;
+    m->frameRate = ::GetNTV2FrameRateFromVideoFormat(vf);
+    m->fmtName = ::NTV2VideoFormatToString(vf, true);
+    m->cadence = 0;
+    m->goodXfers = 0;
+    m->stats = AjaOutputStats{};
+    m->configured = true;
+    return true;
+}
+
+void AjaOutput::stageFrame(const void *pixels, uint32_t bytesPerRow)
+{
+    if (!m->configured || !pixels) return;
+    auto *dst = static_cast<uint8_t *>(m->videoBuf.GetHostPointer());
+    if (bytesPerRow == m->rowBytes) {
+        std::memcpy(dst, pixels, m->frameBytes);
+    } else {
+        const auto *src = static_cast<const uint8_t *>(pixels);
+        for (uint32_t y = 0; y < m->height; ++y)
+            std::memcpy(dst + size_t(y) * m->rowBytes, src + size_t(y) * bytesPerRow, m->rowBytes);
+    }
+}
+
+bool AjaOutput::transfer(const int32_t *audio, uint32_t audioFrames)
+{
+    if (!m->configured) return false;
+    AUTOCIRCULATE_TRANSFER xfer;
+    xfer.SetVideoBuffer(static_cast<ULWord *>(m->videoBuf.GetHostPointer()), m->frameBytes);
+    const uint32_t audioBytes = std::min<uint32_t>(audioFrames * m->audioCh * 4u, m->audioBuf.GetByteCount());
+    if (audioBytes) {
+        if (audio) std::memcpy(m->audioBuf.GetHostPointer(), audio, audioBytes);
+        else       std::memset(m->audioBuf.GetHostPointer(), 0, audioBytes);
+        xfer.SetAudioBuffer(static_cast<ULWord *>(m->audioBuf.GetHostPointer()), audioBytes);
+    }
+    if (!m->card.AutoCirculateTransfer(m->ch, xfer)) {
+        ++m->stats.badTransfers;
+        return false;
+    }
+    ++m->stats.transfers;
+    if (!m->running && ++m->goodXfers >= 2) {
+        m->card.AutoCirculateStart(m->ch);
+        m->running = true;
+        m->stats.running = true;
+    }
+    return true;
+}
+
+bool AjaOutput::canAcceptFrame()
+{
+    if (!m->configured) return false;
+    AUTOCIRCULATE_STATUS st;
+    if (!m->card.AutoCirculateGetStatus(m->ch, st)) return false;
+    m->stats.bufferLevel = st.GetBufferLevel();
+    m->stats.cardDropped = st.GetDroppedFrameCount();
+    return st.CanAcceptMoreOutputFrames();
+}
+
+void AjaOutput::waitForOutputInterrupt()
+{
+    if (!m->configured) return;
+    m->card.WaitForOutputVerticalInterrupt(m->ch);
+    ++m->stats.vbiWaits;
+}
+
+uint32_t AjaOutput::audioFramesForNextFrame()
+{
+    if (!m->configured) return 0;
+    return ::GetAudioSamplesPerFrame(m->frameRate, NTV2_AUDIO_48K, m->cadence++);
+}
+
+uint32_t AjaOutput::audioChannels() const { return m->audioCh; }
+uint32_t AjaOutput::frameBytes() const { return m->frameBytes; }
+std::string AjaOutput::deviceName() const { return m->devName; }
+std::string AjaOutput::formatName() const { return m->fmtName; }
+
+std::string AjaOutput::describe() const
+{
+    if (!m->acquired) return "no device";
+    if (!m->configured) return m->devName;
+    return m->devName + " · " + m->fmtName + (m->hdmi ? " · SDI + HDMI" : " · SDI");
+}
+
+AjaOutputStats AjaOutput::stats()
+{
+    if (m->configured) {
+        AUTOCIRCULATE_STATUS st;
+        if (m->card.AutoCirculateGetStatus(m->ch, st)) {
+            m->stats.bufferLevel = st.GetBufferLevel();
+            m->stats.cardDropped = st.GetDroppedFrameCount();
+        }
+    }
+    return m->stats;
+}

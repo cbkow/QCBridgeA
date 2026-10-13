@@ -1,0 +1,5 @@
+build*/
+build-configure.log
+private/
+dist/
+.DS_Store

@@ -1,0 +1,4 @@
+[submodule "external/libajantv2"]
+	path = external/libajantv2
+	url = https://github.com/aja-video/libajantv2.git
+	branch = ntv2_17_5
