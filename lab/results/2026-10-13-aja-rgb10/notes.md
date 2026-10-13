@@ -45,7 +45,9 @@ probe writes for RGB10 keeps every code value.
 Found on the way: on Windows nothing redraws while the picture is paused,
 so a sink that attached to a paused QCView got no frame until something
 else redrew (the first run published only at quit). The bus now asks the
-renderer for a frame when a sink becomes active.
+renderer for a frame when a sink becomes active (QCView, the commit after
+8a61424d); rerun on the paused clip: both passes ran 4 ms after the sinks
+attached, both dumps written.
 
 ## The sink (QCBridgeA 5a0e24d)
 
