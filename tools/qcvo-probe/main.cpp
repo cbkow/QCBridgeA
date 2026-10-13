@@ -13,6 +13,7 @@
 //     without closing after N frames, the way a crashed sink would.
 //
 //   qcvo-probe produce --id ndi [--width 1920 --height 1080 --fps 25 --seconds 10]
+//                      [--transfer sdr|pq|hlg: what a request with transfer 0 gets]
 //                      [--no-audio] [--muted] [--launched] [--retire-after S] [--die-after S]
 //     The QCView side: creates the rings, answers requests (anything up to
 //     the canvas cap is accepted in the format asked for), publishes a
@@ -48,7 +49,7 @@ struct Args {
     std::string cmd, id = "probe", dump, status = "qcvo-probe consuming";
     uint32_t width = 1920, height = 1080, fps = 25;
     OutputPixelFormat format = OutputPixelFormat::BGRA8;
-    OutputTransfer transfer = OutputTransfer::SdrRec709;
+    OutputTransfer transfer = OutputTransfer::Unspecified;   // consume: 0 = the producer's setting; produce: what a 0 request gets (0 = SDR)
     OutputFit fit = OutputFit::Letterbox;
     OutputContent content = OutputContent::Composite;
     uint32_t layers = kOutputLayerGuides | kOutputLayerAnnotations;
@@ -149,6 +150,7 @@ int consume(const Args& a) {
     uint64_t frames = 0, audio_packets = 0, audio_gaps = 0, muted_packets = 0;
     int64_t first_frame_ns = 0, last_frame_ns = 0, last_beat = 0, last_report = t0;
     uint64_t expected_first_frame = 0; bool have_expected = false;
+    uint64_t hdr_gen = 0;
     std::vector<uint8_t> last_pixels; OutputFrameDesc last_desc {};
     std::vector<float> planes(static_cast<size_t>(kMaxAudioChannels) * kDefaultAudioSlotFrames);
     if (have_audio) audio.skip_to_latest(&a_seen);
@@ -173,6 +175,13 @@ int consume(const Args& a) {
                 accepted = false;
                 std::printf("reply: REFUSED (%s) \"%s\"\n", refusal_name(reply.refusal), reply.message);
             }
+        }
+
+        {
+            OutputHdrInfo hi {};
+            if (ring.read_hdr_info(&hi, &hdr_gen))
+                std::printf("hdr info: transfer %u primaries %u mastering %.0f/%.4f nits MaxCLL %u MaxFALL %u\n",
+                            hi.transfer, hi.primaries, hi.max_mastering_nits, hi.min_mastering_nits, hi.max_cll, hi.max_fall);
         }
 
         OutputFrameDesc d {}; const void* px = nullptr;
@@ -373,19 +382,33 @@ int produce(const Args& a) {
             } else if (output_bytes_per_pixel(fmt) == 0) {
                 reply.refusal = static_cast<uint32_t>(OutputRefusal::UnsupportedFormat);
                 std::snprintf(reply.message, sizeof reply.message, "pixel format %u", req.pixel_format);
-            } else if (req.transfer == 0 || req.transfer > static_cast<uint32_t>(OutputTransfer::HlgRec2020)) {
+            } else if (req.transfer > static_cast<uint32_t>(OutputTransfer::HlgRec2020)) {
                 reply.refusal = static_cast<uint32_t>(OutputRefusal::UnsupportedTransfer);
                 std::snprintf(reply.message, sizeof reply.message, "transfer %u", req.transfer);
             } else {
+                // transfer 0 = "the producer's setting" (the --transfer option here).
+                const uint32_t transfer = req.transfer ? req.transfer
+                                        : a.transfer != OutputTransfer::Unspecified ? static_cast<uint32_t>(a.transfer)
+                                        : static_cast<uint32_t>(OutputTransfer::SdrRec709);
                 reply.accepted = 1;
                 reply.width = req.width; reply.height = req.height;
-                reply.pixel_format = req.pixel_format; reply.transfer = req.transfer;
+                reply.pixel_format = req.pixel_format; reply.transfer = transfer;
                 reply.content = req.content == 0 ? static_cast<uint32_t>(OutputContent::Composite) : req.content;
                 reply.layers = req.layers;
                 std::snprintf(reply.message, sizeof reply.message, "%ux%u %s from qcvo-probe", req.width, req.height, format_name(req.pixel_format));
                 d = OutputFrameDesc {};
                 d.width = req.width; d.height = req.height;
-                d.pixel_format = req.pixel_format; d.transfer = req.transfer;
+                d.pixel_format = req.pixel_format; d.transfer = transfer;
+                // The HDR block beside the reply: PQ gets a 1000-nit Rec.2020 mastering
+                // display and MaxCLL / MaxFALL 1000 / 400; HLG and SDR carry the transfer only.
+                OutputHdrInfo hi {};
+                hi.transfer = transfer;
+                if (transfer == static_cast<uint32_t>(OutputTransfer::PqRec2020)) {
+                    hi.primaries = static_cast<uint32_t>(OutputPrimaries::Rec2020);
+                    hi.max_mastering_nits = 1000.f; hi.min_mastering_nits = 0.005f;
+                    hi.max_cll = 1000; hi.max_fall = 400;
+                }
+                ring.write_hdr_info(hi);
                 d.content = reply.content; d.layers = reply.layers;
                 d.bytes_per_row = output_aligned_bytes_per_row(req.width, fmt);
                 d.flags = kOutputFrameHasA | kOutputFrameTimecodeValid;

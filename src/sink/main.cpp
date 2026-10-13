@@ -48,6 +48,7 @@ void usage()
                 "  --no-hdmi            SDI only\n"
                 "  --hdmi-color <c>     rgb (default, full range from the frame store) or ycbcr (from the CSC)\n"
                 "  --8bit               ask QCView for BGRA8 instead of RGB10\n"
+                "  --transfer <t>       sdr, pq or hlg; default: what QCView's Output section says\n"
                 "  --audio-channels N   embedded channels, 2..16 (default 8)\n"
                 "  --card-frames N      AutoCirculate buffers, 3..16 (default 4)\n"
                 "  --fps N              rate when the stamp has none (default 25; 23.976, 29.97 and 59.94 accepted)\n"
@@ -76,6 +77,7 @@ int main(int argc, char **argv)
         else if (a == "--no-hdmi")        cfg.hdmi = false;
         else if (a == "--hdmi-color")     { const std::string c = next("--hdmi-color"); cfg.hdmiRgb = c != "ycbcr"; }
         else if (a == "--8bit")           cfg.tenBit = false;
+        else if (a == "--transfer")       { const std::string t = next("--transfer"); cfg.transfer = t == "pq" ? 2u : t == "hlg" ? 3u : t == "sdr" ? 1u : 0u; }
         else if (a == "--audio-channels") cfg.audioChannels = uint32_t(std::strtoul(next("--audio-channels").c_str(), nullptr, 10));
         else if (a == "--card-frames")    cfg.cardFrames = uint32_t(std::strtoul(next("--card-frames").c_str(), nullptr, 10));
         else if (a == "--fps")            { const double f = std::strtod(next("--fps").c_str(), nullptr);

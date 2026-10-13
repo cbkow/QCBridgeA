@@ -69,6 +69,8 @@ struct AjaOutput::Impl {
     bool             hdmi = false;
     bool             hdmiRgb = true;
     bool             tenBit = false;
+    bool             cfgOk = false;
+    AjaOutput::HdrSignal hdr;
     bool             configured = false;
     bool             running = false;
     uint32_t         width = 0, height = 0, frameBytes = 0, rowBytes = 0, audioCh = 0;
@@ -176,11 +178,12 @@ void AjaOutput::close()
     m->card.Close();
 }
 
-bool AjaOutput::configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen, bool tenBit,
+bool AjaOutput::configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen, bool tenBit, uint32_t transfer,
                           uint32_t audioChannels, bool hdmi, HdmiColor hdmiColor, uint32_t cardFrames, std::string *err)
 {
     if (!m->acquired) { if (err) *err = "device not open"; return false; }
     m->stopCirculate();
+    m->cfgOk = false;
     // PLAN A4: the bus's RGB10 is the card's 10-bit RGB word for word; BGRA8 is ARGB (B,G,R,A).
     m->pf = tenBit ? NTV2_FBF_10BIT_RGB : NTV2_FBF_ARGB;
 
@@ -235,8 +238,17 @@ bool AjaOutput::configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint
     const NTV2InputXptID  cscIn     = ::GetCSCInputXptFromChannel(m->ch, false);
     m->card.ClearRouting();
     m->card.Connect(cscIn, fsVidOut, canVerify);
-    m->card.SetColorSpaceMatrixSelect(NTV2_Rec709Matrix, m->ch);
+    // Full-range RGB in; Rec.709 YCbCr out for SDR, Rec.2020 for PQ and HLG
+    // (the enhanced CSC has the 2020 matrix; the original one is 709 only).
+    const bool hdr = transfer == 2u || transfer == 3u;
     m->card.SetColorSpaceRGBBlackRange(NTV2_CSC_RGB_RANGE_FULL, m->ch);
+    if (m->card.features().CanDoEnhancedCSC()) {
+        m->card.SetColorSpaceMethod(NTV2_CSC_Method_Enhanced, m->ch);
+        m->card.SetColorSpaceMatrixSelect(hdr ? NTV2_GBRFull_to_YCbCr_Rec2020_Matrix : NTV2_GBRFull_to_YCbCr_Rec709_Matrix, m->ch);
+    } else {
+        m->card.SetColorSpaceMatrixSelect(NTV2_Rec709Matrix, m->ch);
+        if (hdr && err) *err = m->devName + " has no Rec.2020 matrix";   // reported, not fatal: the picture still goes out
+    }
     if (m->card.features().HasBiDirectionalSDI()) m->card.SetSDITransmitEnable(m->ch, true);
     m->card.Connect(::GetSDIOutputInputXpt(m->ch, false), cscVidOut, canVerify);
     m->card.SetSDIOutputStandard(m->ch, ::GetNTV2StandardFromVideoFormat(vf));
@@ -278,6 +290,10 @@ bool AjaOutput::configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint
     m->hdmi = haveHdmi;
     m->hdmiRgb = hdmiColor == HdmiColor::Rgb;
     m->tenBit = tenBit;
+    m->hdr = HdrSignal{};
+    m->hdr.transfer = transfer;
+    m->cfgOk = true;
+    setHdr(m->hdr);
     m->width = width; m->height = height;
     m->frameRate = ::GetNTV2FrameRateFromVideoFormat(vf);
     m->fmtName = ::NTV2VideoFormatToString(vf, true);
@@ -286,6 +302,37 @@ bool AjaOutput::configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint
     m->stats = AjaOutputStats{};
     m->configured = true;
     return true;
+}
+
+void AjaOutput::setHdr(const HdrSignal &hdr)
+{
+    if (!m->acquired || !m->cfgOk) return;
+    m->hdr = hdr;
+    const bool pq = hdr.transfer == 2u, hlg = hdr.transfer == 3u, isHdr = pq || hlg;
+
+    // SDI: the VPID says what the samples are.
+    m->card.SetVPIDTransferCharacteristics(pq ? NTV2_VPID_TC_PQ : hlg ? NTV2_VPID_TC_HLG : NTV2_VPID_TC_SDR_TV, m->ch);
+    m->card.SetVPIDColorimetry(isHdr ? NTV2_VPID_Color_UHDTV : NTV2_VPID_Color_Rec709, m->ch);
+    m->card.SetVPIDLuminance(NTV2_VPID_Luminance_YCbCr, m->ch);
+
+    // HDMI: the HDR InfoFrame (CTA-861 static metadata) or none.
+    if (!m->hdmi || !m->card.features().CanDoHDMIHDROut()) return;
+    if (!isHdr) { m->card.EnableHDMIHDR(false); return; }
+    HDRFloatValues v {};
+    const bool p3 = hdr.primaries == 2u;
+    v.greenPrimaryX = p3 ? 0.265f : 0.170f;  v.greenPrimaryY = p3 ? 0.690f : 0.797f;
+    v.bluePrimaryX  = p3 ? 0.150f : 0.131f;  v.bluePrimaryY  = p3 ? 0.060f : 0.046f;
+    v.redPrimaryX   = p3 ? 0.680f : 0.708f;  v.redPrimaryY   = p3 ? 0.320f : 0.292f;
+    v.whitePointX   = 0.3127f;               v.whitePointY   = 0.3290f;
+    v.maxMasteringLuminance = pq ? uint16_t(std::clamp(hdr.maxMasteringNits, 0.f, 65535.f)) : 0u;
+    v.minMasteringLuminance = pq ? hdr.minMasteringNits : 0.f;
+    v.maxContentLightLevel      = pq ? uint16_t(std::min<uint32_t>(hdr.maxCll, 65535u)) : 0u;
+    v.maxFrameAverageLightLevel = pq ? uint16_t(std::min<uint32_t>(hdr.maxFall, 65535u)) : 0u;
+    v.electroOpticalTransferFunction = pq ? 2u : 3u;   // CTA-861: 2 = ST 2084, 3 = HLG
+    v.staticMetadataDescriptorID = 0u;
+    m->card.SetHDRData(v);
+    m->card.SetHDMIHDRConstantLuminance(false);
+    m->card.EnableHDMIHDR(true);
 }
 
 void AjaOutput::stageFrame(const void *pixels, uint32_t bytesPerRow)
@@ -357,7 +404,8 @@ std::string AjaOutput::describe() const
 {
     if (!m->acquired) return "no device";
     if (!m->configured) return m->devName;
-    return m->devName + " " + m->fmtName + (m->tenBit ? " 10-bit" : " 8-bit") + ", SDI"
+    const char *tf = m->hdr.transfer == 2u ? " PQ 2020" : m->hdr.transfer == 3u ? " HLG 2020" : " SDR 709";
+    return m->devName + " " + m->fmtName + (m->tenBit ? " 10-bit" : " 8-bit") + tf + ", SDI"
          + (m->hdmi ? (m->hdmiRgb ? " + HDMI RGB" : " + HDMI YCbCr") : "");
 }
 

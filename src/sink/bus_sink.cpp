@@ -143,7 +143,7 @@ void BusSink::run()
         req.protocol_version = kOutputDescVersion;
         req.width = m_cfg.width;  req.height = m_cfg.height;
         req.pixel_format = static_cast<uint32_t>(wantFmt);
-        req.transfer     = static_cast<uint32_t>(OutputTransfer::SdrRec709);
+        req.transfer     = m_cfg.transfer;   // 0: QCView's Output section decides
         req.fit          = static_cast<uint32_t>(OutputFit::Letterbox);
         req.content      = static_cast<uint32_t>(m_cfg.content);
         req.layers       = m_cfg.layers;
@@ -163,6 +163,10 @@ void BusSink::run()
         std::future<bool> opening;
         bool configured = false;
         OutputPixelFormat gotFmt = OutputPixelFormat::Unspecified, cfgFmt = OutputPixelFormat::Unspecified;
+        uint32_t gotTransfer = 1, cfgTransfer = 0;
+        OutputHdrInfo hdrInfo {};
+        uint64_t hdrGen = 0;
+        bool haveHdr = false;
         uint32_t curNum = 0, curDen = 0, pendNum = 0, pendDen = 0, pendCount = 0;
         uint32_t perFrame = 0;   // nominal audio frames per video frame, for the queue bounds
         queue.clear();
@@ -177,10 +181,21 @@ void BusSink::run()
             m_stats.card = line;
         };
 
+        auto applyHdr = [&]() {
+            AjaOutput::HdrSignal h;
+            h.transfer = hdrInfo.transfer ? hdrInfo.transfer : gotTransfer;
+            h.primaries = hdrInfo.primaries;
+            h.maxMasteringNits = hdrInfo.max_mastering_nits;
+            h.minMasteringNits = hdrInfo.min_mastering_nits;
+            h.maxCll = hdrInfo.max_cll;  h.maxFall = hdrInfo.max_fall;
+            m_aja.setHdr(h);
+            std::printf("QCBridgeA: HDR metadata: transfer %u primaries %u mastering %.0f/%.4f nits MaxCLL %u MaxFALL %u\n",
+                        h.transfer, h.primaries, h.maxMasteringNits, h.minMasteringNits, h.maxCll, h.maxFall);
+        };
         auto configureFor = [&](uint32_t num, uint32_t den) -> bool {
             std::string err;
             const bool tenBit = gotFmt == OutputPixelFormat::RGB10;
-            if (!m_aja.configure(m_cfg.width, m_cfg.height, num, den, tenBit, m_cfg.audioChannels, m_cfg.hdmi,
+            if (!m_aja.configure(m_cfg.width, m_cfg.height, num, den, tenBit, gotTransfer, m_cfg.audioChannels, m_cfg.hdmi,
                                  m_cfg.hdmiRgb ? AjaOutput::HdmiColor::Rgb : AjaOutput::HdmiColor::YCbCr,
                                  m_cfg.cardFrames, &err)) {
                 configured = false;
@@ -189,6 +204,8 @@ void BusSink::run()
             }
             configured = true;
             cfgFmt = gotFmt;
+            cfgTransfer = gotTransfer;
+            if (haveHdr) applyHdr();
             curNum = num; curDen = den;
             pendCount = 0;
             perFrame = uint32_t(std::lround(48000.0 * den / num));
@@ -210,6 +227,7 @@ void BusSink::run()
                 if (accepted) {
                     gotFmt = static_cast<OutputPixelFormat>(reply.pixel_format);
                     if (gotFmt != OutputPixelFormat::RGB10 && gotFmt != OutputPixelFormat::BGRA8) accepted = false;
+                    gotTransfer = reply.transfer ? reply.transfer : 1u;
                 }
                 const bool fallBack = !accepted && wantFmt == OutputPixelFormat::RGB10
                                    && static_cast<OutputRefusal>(reply.refusal) == OutputRefusal::UnsupportedFormat;
@@ -227,7 +245,13 @@ void BusSink::run()
                     req.pixel_format = static_cast<uint32_t>(wantFmt);
                     ring.write_request(req);
                 }
-                if (configured && accepted && gotFmt != cfgFmt) { m_aja.close(); configured = false; }   // depth changed: start over
+                if (configured && accepted && (gotFmt != cfgFmt || gotTransfer != cfgTransfer)) { m_aja.close(); configured = false; }   // depth or transfer changed: start over
+            }
+
+            // ---- HDR metadata from QCView's Output section, whenever it changes ----
+            if (ring.read_hdr_info(&hdrInfo, &hdrGen)) {
+                haveHdr = true;
+                if (configured) applyHdr();
             }
 
             // ---- audio: every packet into the queue (always, so the ring never laps us) ----

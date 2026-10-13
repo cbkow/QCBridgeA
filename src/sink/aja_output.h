@@ -35,6 +35,16 @@ public:
 
     enum class HdmiColor { Rgb, YCbCr };
 
+    // What the frames are and how the wire says so: transfer 1 SDR Rec.709,
+    // 2 PQ Rec.2100, 3 HLG Rec.2100 (the bus's OutputTransfer); for PQ the
+    // mastering display (primaries 1 Rec.2020, 2 P3-D65) and light levels.
+    struct HdrSignal {
+        uint32_t transfer  = 1;
+        uint32_t primaries = 1;
+        float    maxMasteringNits = 0.f, minMasteringNits = 0.f;
+        uint32_t maxCll = 0, maxFall = 0;
+    };
+
     // Picks the NTV2 video format for the raster and rate (1080p and 720p
     // progressive, see PLAN A3), the frame store (10-bit RGB for the bus's
     // RGB10, else 8-bit ARGB; both full range), `audioChannels` embedded
@@ -43,8 +53,15 @@ public:
     // (HdmiColor::Rgb, full range, 10-bit when the picture is) or the CSC's
     // YCbCr — and initialises AutoCirculate with `cardFrames` buffers.
     // Stops any previous session first.
-    bool configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen, bool tenBit,
+    // `transfer` picks the CSC matrix (Rec.709 or Rec.2020 from full-range RGB)
+    // and the signalling (SDI VPID; the HDMI HDR InfoFrame comes from setHdr).
+    bool configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen, bool tenBit, uint32_t transfer,
                    uint32_t audioChannels, bool hdmi, HdmiColor hdmiColor, uint32_t cardFrames, std::string *err);
+
+    // The HDR metadata for the running session: SDI VPID transfer and
+    // colorimetry, HDMI InfoFrame (EOTF, mastering primaries and luminance,
+    // MaxCLL / MaxFALL) — or the InfoFrame off for SDR. Any time after configure().
+    void setHdr(const HdrSignal &hdr);
 
     // Copies one picture (width*height*4 bytes, rows `bytesPerRow` apart,
     // in the configured format) into the DMA buffer. The next transfer() sends it; until a

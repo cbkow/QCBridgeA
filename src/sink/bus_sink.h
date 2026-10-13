@@ -33,6 +33,7 @@ struct SinkConfig {
     bool        hdmi       = true;       // also drive the HDMI output
     bool        hdmiRgb    = true;       // HDMI as RGB full range (else YCbCr from the CSC)
     bool        tenBit     = true;       // ask for RGB10; falls back to BGRA8 when QCView refuses
+    uint32_t    transfer   = 0;          // 0 = QCView's per-output setting; 1 SDR, 2 PQ, 3 HLG forced
     uint32_t    audioChannels = 8;       // embedded channels (stereo in 1-2, the rest silent)
     uint32_t    cardFrames = 4;          // AutoCirculate buffers on the card
     uint32_t    fallbackFpsNum = 25, fallbackFpsDen = 1;   // when the stamp has no rate
