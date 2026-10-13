@@ -39,13 +39,25 @@ user to install AJA's own software for the driver.
   59.94 and 60 progressive. A rate change mid-session reconfigures the
   card (a short glitch, logged). UHD (3840x2160 over 12G) is a later step
   with its own routing.
-- **A4 — BGRA8 first, through the card's colour-space converter.** The
-  frame store takes the ring's BGRA8 as `NTV2_FBF_ARGB` (byte order
-  B, G, R, A in memory) and the card's CSC produces Rec.709 YCbCr on the
-  SDI and HDMI outputs; RGB on the wire is an option. The 10-bit wire
-  (`v210`, written by QCView's output shader when a sink asks, PLAN O7)
-  and the HDR transfers (PQ / HLG with the HDMI infoframe and the SDI
-  VPID) are phase 2 and need the QCView side as well.
+- **A4 — One 10-bit RGB container for every output.** The bus's `RGB10`
+  (10-bit RGB in a 32-bit word, R low; added 2026-10-13) is the GPU's
+  10:10:10:2 render target and the card's `NTV2_FBF_10BIT_RGB` byte for
+  byte, so QCView renders into it and the sink DMAs it unchanged; `BGRA8`
+  stays as the fallback for an older QCView. The card's CSC makes Rec.709
+  (SDR) or Rec.2020 (PQ, HLG) YCbCr 4:2:2 for SDI from full-range RGB;
+  HDMI is fed the frame store's RGB directly (RGB, full range, 10-bit) or
+  the CSC's YCbCr on request. The three outputs are SDR Rec.709, PQ
+  Rec.2100 and HLG Rec.2100 — the container colorimetry is 709 or 2020,
+  nothing else (the SDI VPID and the SDK know no P3 container). "P3" is
+  content gamut-limited to P3-D65 in the 2020 container plus ST 2086
+  mastering metadata (AJA's "DCI-P3" preset). RGBA16F never goes to the
+  card; 12-bit RGB 4:4:4 (`48BIT_RGB`) and `v210` are later, if a monitor
+  or a non-RGB sink asks.
+- **A4b — Metadata is QCView's.** Mastering primaries (Rec.2020 or P3-D65),
+  min/max mastering luminance, MaxCLL and MaxFALL live in QCView's Output
+  section beside the transfer, travel over the bus, and the sink writes
+  them into the HDMI HDR InfoFrame (SDI carries only the VPID: transfer,
+  colorimetry, luminance, RGB range; HLG has no static metadata).
 - **A5 — Audio is the bus's stereo in channels 1 and 2.** Planar float
   from the audio ring becomes interleaved signed 32-bit PCM at 48 kHz
   (the SDK's native word), the remaining embedded channels silent; the
@@ -69,8 +81,14 @@ user to install AJA's own software for the driver.
    first, then QCView: cadence at 23.976 / 25 / 29.97, audio continuity,
    latency viewport→SDI monitor (photo method), start/stop 20×, quit
    while attached, Premiere's AJA Transmit hand-off.
-3. **Phase 2.** `v210` on the bus (QCView output shader + request enum),
-   PQ/HLG transfers with metadata; UHD routing.
+   *Step 1 done 2026-10-13:* RGB10 on the bus, in both QCView output
+   passes and in the sink; first AutoCirculate run on the T-TAP Pro at
+   1080p25 10-bit (`lab/results/2026-10-13-aja-rgb10/`).
+3. **Phase 2.** PQ and HLG on the RGB10 container: per-output transfer
+   and OCIO display/view in QCView (the Rec.2100 displays), the HDR
+   encode for guides and strokes, mastering metadata over the bus; the
+   sink's 2020 matrix, VPID and HDMI InfoFrame. Then UHD routing; `v210`
+   and 12-bit RGB when asked for.
 4. **Packaging.** Windows Setup (Inno) writing `%ProgramData%\QCView\
    Outputs\aja.json`; macOS pkg when a Mac has the AJA software installed.
 
