@@ -58,6 +58,14 @@ user to install AJA's own software for the driver.
   section beside the transfer, travel over the bus, and the sink writes
   them into the HDMI HDR InfoFrame (SDI carries only the VPID: transfer,
   colorimetry, luminance, RGB range; HLG has no static metadata).
+- **A4c — The transfer is a tag, the picture is the viewport's (2026-10-14).**
+  QCView's Output row has one dropdown per output — SDR Rec.709, PQ
+  Rec.2100, HLG Rec.2100 — which is what the wire is told and signals. The
+  picture goes out as displayed: OCIO's or minColor's display is chosen in
+  the colour panel, not again per output, and a Premiere or After Effects
+  feed that is already PQ or HLG passes straight through. (A per-output
+  "re-render through a Rec.2100 view" option existed for a day and was
+  dropped as redundant with the colour panel.)
 - **A5 — Audio is the bus's stereo in channels 1 and 2.** Planar float
   from the audio ring becomes interleaved signed 32-bit PCM at 48 kHz
   (the SDK's native word), the remaining embedded channels silent; the
