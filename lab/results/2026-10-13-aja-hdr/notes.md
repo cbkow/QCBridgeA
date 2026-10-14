@@ -151,3 +151,29 @@ forced UHD and 1080p). D3D11 and Metal output passes both render UHD RGB10.
 Not yet looked at: the monitor's info page at UHD (3840x2160 and the HDMI
 colour format), UHD above 30p (the HDMI side is switched to the CSC's YCbCr
 there), UHD PQ.
+
+## HDR at UHD on the T-TAP Pro (2026-10-14, later)
+
+`aja-uhd-hdr.cmd`: the UHD 25p clip through the minColor PQ display
+(engine 1, display 6), Raster = Auto, transfer PQ; HLG at 18 s; 1080p + PQ
+at 28 s; UHD at 38 s; quit at 48 s.
+
+    accepted 3840x2160 "3840x2160 RGB10 PQ Rec.2100 from QCView"
+    HDR metadata: transfer 2 primaries 1 mastering 1000/0.0050 nits MaxCLL 1000 MaxFALL 400
+    AJA T-TAP Pro UHDp25 10-bit PQ 2020, SDI + HDMI RGB
+    transfer changed to HLG - reconfiguring  -> UHDp25 10-bit HLG 2020 (metadata transfer 3)
+    raster changed to 1920x1080 - reconfiguring -> 1080p25 10-bit HLG 2020
+    transfer changed to PQ - reconfiguring -> 1080p25 10-bit PQ 2020
+    raster changed to 3840x2160 - reconfiguring -> UHDp25 10-bit PQ 2020
+    done - 1024 pictures, 1085 transfers, 0 dropped, 0 bad; UHDp25 25/s throughout
+
+Every step an in-place reconfigure; the VPID and InfoFrame followed each
+time. On the Mac the same run through `qcvo-probe` at 0x0 gave the UHD PQ
+frame the 1080p PQ code values exactly (bars yellow 512,505,300 ≈ 93/87/9
+nits, peak 576); the HLG dump equals the PQ one, as it should — the
+picture is the viewport's (minColor's PQ display) and the transfer is a tag.
+Two small things seen, not bugs: a transfer change applies the previous
+HDR block once before the new block lands in the same poll (two "HDR
+metadata" lines); two settings changed in one second answer twice (two
+reconfigures). Still owed: the monitor's info page at UHD (3840x2160 and
+ST 2084 / BT.2020), UHD above 30p (HDMI then YCbCr), 23.976 at UHD.
