@@ -1,3 +1,3 @@
-{ "id": "aja", "name": "QCBridgeA (AJA SDI/HDMI)", "protocol": 1,
+{ "id": "aja", "name": "QCBridgeA (AJA SDI/HDMI)", "label": "AJA", "product": "QCBridgeA", "protocol": 1,
   "exec": "C:\\Program Files\\QCBridgeA\\QCBridgeA.exe",
   "args": ["--id", "aja"] }
