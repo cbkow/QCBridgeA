@@ -53,6 +53,8 @@ void usage()
                 "  --transfer <t>       sdr, pq or hlg; default: what QCView's Output section says\n"
                 "  --audio-channels N   embedded channels, 2..16 (default 8)\n"
                 "  --card-frames N      AutoCirculate buffers, 3..16 (default 4)\n"
+                "  --dma-lock <m>       map (default: host buffers pinned and mapped for the session), pages (pinned only)\n"
+                "                       or none (the driver pins per transfer) - a lever for kernel-side trouble\n"
                 "  --fps N              rate when the stamp has none (default 25; 23.976, 29.97 and 59.94 accepted)\n"
                 "  --seconds N          quit after N seconds\n", QCBRIDGEA_VERSION);
 }
@@ -79,6 +81,7 @@ int main(int argc, char **argv)
         else if (a == "--no-hdmi")        cfg.hdmi = false;
         else if (a == "--hdmi-color")     { const std::string c = next("--hdmi-color"); cfg.hdmiRgb = c != "ycbcr"; }
         else if (a == "--8bit")           cfg.tenBit = false;
+        else if (a == "--dma-lock")       { const std::string m = next("--dma-lock"); cfg.dmaLock = m == "none" ? 2 : m == "pages" ? 1 : 0; }
         else if (a == "--transfer")       { const std::string t = next("--transfer"); cfg.transfer = t == "pq" ? 2u : t == "hlg" ? 3u : t == "sdr" ? 1u : 0u; }
         else if (a == "--audio-channels") cfg.audioChannels = uint32_t(std::strtoul(next("--audio-channels").c_str(), nullptr, 10));
         else if (a == "--card-frames")    cfg.cardFrames = uint32_t(std::strtoul(next("--card-frames").c_str(), nullptr, 10));

@@ -79,6 +79,7 @@ struct AjaOutput::Impl {
     bool             hdmiRgb = true;
     bool             hdmiYcbcrForced = false;   // UHD above 30p: RGB asked for, YCbCr sent (HDMI 2.0)
     bool             hdmi4k = false;            // the HDMI rasteriser is in 4K playback mode
+    AjaOutput::DmaLock dmaLock = AjaOutput::DmaLock::Map;
     bool             tenBit = false;
     bool             cfgOk = false;
     AjaOutput::HdrSignal hdr;
@@ -311,8 +312,11 @@ bool AjaOutput::configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint
     }
     m->videoBuf.Fill(uint32_t(0));   // black until the first frame is staged
     m->audioBuf.Fill(uint32_t(0));
-    m->card.DMABufferLock(m->videoBuf, true);
-    m->card.DMABufferLock(m->audioBuf, true);
+    if (m->dmaLock != DmaLock::None) {
+        const bool map = m->dmaLock == DmaLock::Map;
+        m->card.DMABufferLock(m->videoBuf, map);
+        m->card.DMABufferLock(m->audioBuf, map);
+    }
 
     // AutoCirculate over `cardFrames` on-card buffers (PLAN A2).
     const UWord frames = UWord(std::clamp<uint32_t>(cardFrames, 3u, 16u));
@@ -340,6 +344,8 @@ bool AjaOutput::configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint
     m->configured = true;
     return true;
 }
+
+void AjaOutput::setDmaLock(DmaLock mode) { m->dmaLock = mode; }
 
 void AjaOutput::setHdr(const HdrSignal &hdr)
 {
@@ -442,8 +448,9 @@ std::string AjaOutput::describe() const
     if (!m->acquired) return "no device";
     if (!m->configured) return m->devName;
     const char *tf = m->hdr.transfer == 2u ? " PQ 2020" : m->hdr.transfer == 3u ? " HLG 2020" : " SDR 709";
+    const char *dma = m->dmaLock == DmaLock::Map ? "" : m->dmaLock == DmaLock::Pages ? ", DMA pages pinned" : ", DMA unpinned";
     return m->devName + " " + m->fmtName + (m->tenBit ? " 10-bit" : " 8-bit") + tf + ", SDI"
-         + (m->hdmi ? (m->hdmiRgb ? " + HDMI RGB" : m->hdmiYcbcrForced ? " + HDMI YCbCr (RGB needs 30p or below at UHD)" : " + HDMI YCbCr") : "");
+         + (m->hdmi ? (m->hdmiRgb ? " + HDMI RGB" : m->hdmiYcbcrForced ? " + HDMI YCbCr (RGB needs 30p or below at UHD)" : " + HDMI YCbCr") : "") + dma;
 }
 
 AjaOutputStats AjaOutput::stats()

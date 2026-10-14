@@ -36,6 +36,7 @@ struct SinkConfig {
     uint32_t    transfer   = 0;          // 0 = QCView's per-output setting; 1 SDR, 2 PQ, 3 HLG forced
     uint32_t    audioChannels = 8;       // embedded channels (stereo in 1-2, the rest silent)
     uint32_t    cardFrames = 4;          // AutoCirculate buffers on the card
+    int         dmaLock    = 0;          // 0 pin + map (default), 1 pin only, 2 none (AjaOutput::DmaLock)
     uint32_t    fallbackFpsNum = 25, fallbackFpsDen = 1;   // when the stamp has no rate
 };
 

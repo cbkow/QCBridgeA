@@ -72,7 +72,11 @@ bool sameRate(uint32_t an, uint32_t ad, uint32_t bn, uint32_t bd)
 
 } // namespace
 
-BusSink::BusSink(AjaOutput &aja, SinkConfig cfg) : m_aja(aja), m_cfg(std::move(cfg)) {}
+BusSink::BusSink(AjaOutput &aja, SinkConfig cfg) : m_aja(aja), m_cfg(std::move(cfg))
+{
+    m_aja.setDmaLock(m_cfg.dmaLock == 2 ? AjaOutput::DmaLock::None
+                   : m_cfg.dmaLock == 1 ? AjaOutput::DmaLock::Pages : AjaOutput::DmaLock::Map);
+}
 
 BusSink::~BusSink() { stop(); }
 

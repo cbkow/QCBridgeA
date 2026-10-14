@@ -34,6 +34,12 @@ public:
     bool isOpen() const;
 
     enum class HdmiColor { Rgb, YCbCr };
+    // How the host DMA buffers are handed to the driver: pinned and mapped
+    // for the session (the SDK's fast path), pinned only, or left to the
+    // driver per transfer. A lever for the box's 2026-10-13/14 bugchecks
+    // (dxgmms2 host-aperture mapping in Adobe's process, with the sink up).
+    enum class DmaLock { Map, Pages, None };
+    void setDmaLock(DmaLock m);
 
     // What the frames are and how the wire says so: transfer 1 SDR Rec.709,
     // 2 PQ Rec.2100, 3 HLG Rec.2100 (the bus's OutputTransfer); for PQ the
