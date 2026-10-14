@@ -89,3 +89,22 @@ HDMI HDR InfoFrame carries the EOTF (2 = ST 2084, 3 = HLG) and, for PQ,
 the mastering primaries (2020 or P3-D65 with a D65 white), luminance and
 light levels from the bus's block — or is switched off for SDR. The
 metadata is re-applied whenever QCView rewrites the block.
+
+## 2026-10-14 — manual session, and the view option dropped
+
+QCView's dev build ran on the box desktop for a manual session with the
+T-TAP Pro (SDR, PQ as displayed, PQ and HLG through the ACES 2.0 view).
+Verdict: "working very well". Two notes came back: the Output row was too
+wide for the rail, and the per-output view re-render duplicated the colour
+panel — OCIO or minColor already choose the display there. The view option
+is gone (QCView commit of 2026-10-14, plan A4c). Each output keeps one
+dropdown, the transfer, which is what the wire is told; PQ keeps its
+mastering primaries and nits on their own line.
+
+minColor through the bus, checked on the Mac (engine minColor, display
+"Rec.2100 - PQ / Rec.2020 (P3 Limited)", the bars clip, two RGB10 probe
+consumers): the PQ output received the viewport's PQ picture (yellow bar
+512, 505, 300 = 93 / 87 / 9 nits, max 556 — within a few code values of
+the ACES 2.0 result) and the SDR output the SDR capture (1023, 958, 0).
+Both engines take the same two paths, so an AJA output under minColor
+needs nothing more.
