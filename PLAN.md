@@ -33,12 +33,18 @@ user to install AJA's own software for the driver.
   frame otherwise, each with the audio due for one frame. One memcpy per
   new frame into a page-aligned, DMA-locked host buffer; the ring claim
   is held only for the copy.
-- **A3 — Video format from the stamp, raster from the request.** The
-  sink requests 1920x1080 (or 1280x720) letterboxed and picks the NTV2
-  video format from the frame stamp's fps: 23.976, 24, 25, 29.97, 30, 50,
-  59.94 and 60 progressive. A rate change mid-session reconfigures the
-  card (a short glitch, logged). UHD (3840x2160 over 12G) is a later step
-  with its own routing.
+- **A3 — Video format from the stamp, raster from QCView.** The sink
+  asks for 0x0 — QCView's per-output raster setting: Auto (the source's
+  class: UHD above 1080p, 1080p otherwise, re-answered when the source
+  changes class), 1080p or UHD — or a fixed `--raster`, letterboxed, and
+  picks the NTV2 video format from the raster and the frame stamp's fps:
+  23.976, 24, 25, 29.97, 30, 50, 59.94 and 60 progressive. A rate or raster
+  change mid-session reconfigures the card in place (a short glitch,
+  logged). UHD (3840x2160) is one 12G stream from one frame store in
+  two-sample-interleave mode, the HD routing — devices with 12G routing
+  (T-TAP Pro, Kona 5 / Corvid 44 12G firmware, Io 4K Plus); quad-link 4K
+  is not done. HDMI above 30p goes YCbCr (HDMI 2.0 has no room for 10-bit
+  RGB 4:4:4 at UHD50/60). *Done 2026-10-14.*
 - **A4 — One 10-bit RGB container for every output.** The bus's `RGB10`
   (10-bit RGB in a 32-bit word, R low; added 2026-10-13) is the GPU's
   10:10:10:2 render target and the card's `NTV2_FBF_10BIT_RGB` byte for
@@ -95,8 +101,8 @@ user to install AJA's own software for the driver.
 3. **Phase 2.** PQ and HLG on the RGB10 container: per-output transfer
    and OCIO display/view in QCView (the Rec.2100 displays), the HDR
    encode for guides and strokes, mastering metadata over the bus; the
-   sink's 2020 matrix, VPID and HDMI InfoFrame. Then UHD routing; `v210`
-   and 12-bit RGB when asked for.
+   sink's 2020 matrix, VPID and HDMI InfoFrame. Then UHD (done
+   2026-10-14, see A3); `v210` and 12-bit RGB when asked for.
 4. **Packaging.** Windows Setup (Inno) writing `%ProgramData%\QCView\
    Outputs\aja.json`; macOS pkg when a Mac has the AJA software installed.
 

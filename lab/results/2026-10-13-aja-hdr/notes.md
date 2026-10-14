@@ -123,3 +123,31 @@ changed to PQ - reconfiguring", re-described the card ("1080p25 10-bit PQ
 0 dropped, 0 bad, 786 transfers in all. With pass-through the picture is
 unchanged across the switch when the viewport is SDR, so QCView publishes
 nothing new — the card simply re-tags; a PQ or HLG viewport re-publishes.
+
+## UHD on the T-TAP Pro (2026-10-14)
+
+The sink now asks QCView for its raster (a 0x0 request = the Output row's
+Raster setting: Auto, 1080p or UHD; Auto = the source's class). Scripted run
+on the box (`aja-uhd.cmd`, build QCView 7fa386c7 + this sink): a 3840x2160
+25p bars clip playing, the output enabled with Raster = Auto; at 18 s a
+1920x1080 clip opened (Auto re-answers 1080p); at 28 s Raster = UHD; at
+38 s Raster = 1080p; quit at 48 s.
+
+    accepted 3840x2160 ... AJA T-TAP Pro UHDp25 10-bit SDR 709, SDI + HDMI RGB
+    UHDp25, 25/s to the card, 25/s new, card level 2, dropped 0, bad 0   (x12)
+    accepted 1920x1080 -> raster changed to 1920x1080 - reconfiguring -> 1080p25 ...
+    accepted 3840x2160 -> raster changed to 3840x2160 - reconfiguring -> UHDp25 ...
+    accepted 1920x1080 -> raster changed to 1920x1080 - reconfiguring -> 1080p25 ...
+    done - 1019 pictures, 1087 transfers, 0 dropped, 0 bad
+
+Every raster change was an in-place reconfigure (device held, AutoCirculate
+restarted); the card re-described itself each time. UHD is one 12G stream
+from the single frame store in two-sample-interleave mode (the SDK's
+`SetVideoFormat` puts it there, said again explicitly), the HD routing
+otherwise; the HDMI rasteriser goes to 4K playback mode. On the Mac the
+same QCView logic was checked with `qcvo-probe consume --width 0 --height 0`
+(frame descs 3840x2160 RGB10 row 15360; re-answer on the source change;
+forced UHD and 1080p). D3D11 and Metal output passes both render UHD RGB10.
+Not yet looked at: the monitor's info page at UHD (3840x2160 and the HDMI
+colour format), UHD above 30p (the HDMI side is switched to the CSC's YCbCr
+there), UHD PQ.

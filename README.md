@@ -36,12 +36,14 @@ Needs CMake 3.24+, a C++20 compiler and the submodule:
 For development QCView reads manifests from the directory
 `QCV_OUTPUT_MANIFEST_DIR` names as well as from its Outputs folders:
 
-    { "id": "aja", "name": "QCBridgeA (AJA SDI/HDMI)", "label": "AJA", "product": "QCBridgeA", "protocol": 1,
+    { "id": "aja", "name": "QCBridgeA (AJA SDI/HDMI)", "label": "AJA", "product": "QCBridgeA", "raster": "auto", "protocol": 1,
       "exec": "C:\\Program Files\\QCBridgeA\\QCBridgeA.exe",
       "args": ["--id", "aja"] }
 
 `label` is what the Output row leads with and `product` the name shown
 muted beside it; a manifest without them gets both read out of the name.
+`"raster": "auto"` says the sink asks QCView for the raster (a 0x0 request),
+which puts the Raster dropdown (Auto / 1080p / UHD) on the row.
 
 ## How it works
 
