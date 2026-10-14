@@ -26,8 +26,8 @@ class AjaOutput;
 struct SinkConfig {
     std::string id         = "aja";      // the manifest id: rings are /qcview-out-<id>
     std::string device     = "0";        // AJA device index, serial or model
-    uint32_t    width      = 1920;
-    uint32_t    height     = 1080;
+    uint32_t    width      = 0;          // 0x0 = QCView's per-output raster setting (its source's
+    uint32_t    height     = 0;          //   class, 1080p or UHD); else a fixed raster
     uint32_t    layers     = qcbae::kOutputLayerGuides | qcbae::kOutputLayerAnnotations;
     qcbae::OutputContent content = qcbae::OutputContent::Composite;
     bool        hdmi       = true;       // also drive the HDMI output

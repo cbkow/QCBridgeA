@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // QCBridgeA — the application: a headless process over BusSink (PLAN A7).
 //
-//   QCBridgeA [--id aja] [--device 0] [--raster 1920x1080]
+//   QCBridgeA [--id aja] [--device 0] [--raster auto|1920x1080|3840x2160]
 //             [--content composite|a|b] [--no-guides] [--no-annotations]
 //             [--no-hdmi] [--hdmi-color rgb|ycbcr] [--8bit]
 //             [--audio-channels 8] [--card-frames 4] [--fps 25]
@@ -29,6 +29,7 @@ void onSignal(int) { g_quit.store(true); }
 
 bool parseRaster(const std::string &s, uint32_t *w, uint32_t *h)
 {
+    if (s == "auto") { *w = 0; *h = 0; return true; }   // QCView's Output section decides
     const auto x = s.find('x');
     if (x == std::string::npos) return false;
     *w = uint32_t(std::strtoul(s.substr(0, x).c_str(), nullptr, 10));
@@ -41,7 +42,8 @@ void usage()
     std::printf("QCBridgeA %s — QCView's output bus onto an AJA device\n"
                 "  --id <id>            output id in QCView (default aja)\n"
                 "  --device <spec>      AJA device index, serial or model (default 0)\n"
-                "  --raster WxH         1920x1080 (default) or 1280x720\n"
+                "  --raster <r>         auto (default: QCView's Output section — the source's class, 1080p or UHD),\n"
+                "                       1920x1080, 1280x720 or 3840x2160 (UHD needs a 12G single-link device)\n"
                 "  --content <what>     composite (default), a or b\n"
                 "  --no-guides          do not ask for safety guides\n"
                 "  --no-annotations     do not ask for note strokes\n"

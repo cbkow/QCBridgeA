@@ -45,13 +45,15 @@ public:
         uint32_t maxCll = 0, maxFall = 0;
     };
 
-    // Picks the NTV2 video format for the raster and rate (1080p and 720p
-    // progressive, see PLAN A3), the frame store (10-bit RGB for the bus's
+    // Picks the NTV2 video format for the raster and rate (UHD, 1080p and 720p
+    // progressive, see PLAN A3; UHD as one 12G stream, so it needs a device
+    // with 12G routing), the frame store (10-bit RGB for the bus's
     // RGB10, else 8-bit ARGB; both full range), `audioChannels` embedded
     // channels (2..16; HDMI carries the first 8), routes frame store → CSC →
     // SDI 1 and, when `hdmi`, HDMI 1 — fed the frame store's RGB directly
     // (HdmiColor::Rgb, full range, 10-bit when the picture is) or the CSC's
-    // YCbCr — and initialises AutoCirculate with `cardFrames` buffers.
+    // YCbCr; UHD above 30p always YCbCr, HDMI 2.0 has no room for 10-bit RGB
+    // 4:4:4 there — and initialises AutoCirculate with `cardFrames` buffers.
     // Stops any previous session first.
     // `transfer` picks the CSC matrix (Rec.709 or Rec.2020 from full-range RGB)
     // and the signalling (SDI VPID; the HDMI HDR InfoFrame comes from setHdr).

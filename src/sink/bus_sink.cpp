@@ -164,6 +164,7 @@ void BusSink::run()
         bool configured = false;
         OutputPixelFormat gotFmt = OutputPixelFormat::Unspecified, cfgFmt = OutputPixelFormat::Unspecified;
         uint32_t gotTransfer = 1, cfgTransfer = 0;
+        uint32_t gotW = 0, gotH = 0, cfgW = 0, cfgH = 0;   // the raster QCView answered with / the card runs
         OutputHdrInfo hdrInfo {};
         uint64_t hdrGen = 0;
         bool haveHdr = false;
@@ -195,7 +196,7 @@ void BusSink::run()
         auto configureFor = [&](uint32_t num, uint32_t den) -> bool {
             std::string err;
             const bool tenBit = gotFmt == OutputPixelFormat::RGB10;
-            if (!m_aja.configure(m_cfg.width, m_cfg.height, num, den, tenBit, gotTransfer, m_cfg.audioChannels, m_cfg.hdmi,
+            if (!m_aja.configure(gotW, gotH, num, den, tenBit, gotTransfer, m_cfg.audioChannels, m_cfg.hdmi,
                                  m_cfg.hdmiRgb ? AjaOutput::HdmiColor::Rgb : AjaOutput::HdmiColor::YCbCr,
                                  m_cfg.cardFrames, &err)) {
                 configured = false;
@@ -205,6 +206,7 @@ void BusSink::run()
             configured = true;
             cfgFmt = gotFmt;
             cfgTransfer = gotTransfer;
+            cfgW = gotW; cfgH = gotH;
             if (haveHdr) applyHdr();
             curNum = num; curDen = den;
             pendCount = 0;
@@ -228,6 +230,7 @@ void BusSink::run()
                     gotFmt = static_cast<OutputPixelFormat>(reply.pixel_format);
                     if (gotFmt != OutputPixelFormat::RGB10 && gotFmt != OutputPixelFormat::BGRA8) accepted = false;
                     gotTransfer = reply.transfer ? reply.transfer : 1u;
+                    gotW = reply.width; gotH = reply.height;
                 }
                 const bool fallBack = !accepted && wantFmt == OutputPixelFormat::RGB10
                                    && static_cast<OutputRefusal>(reply.refusal) == OutputRefusal::UnsupportedFormat;
@@ -245,16 +248,18 @@ void BusSink::run()
                     req.pixel_format = static_cast<uint32_t>(wantFmt);
                     ring.write_request(req);
                 }
-                // Depth or transfer changed (the Output row's dropdown): the card
-                // is reconfigured in place — the device stays acquired; the CSC
-                // matrix, VPID and InfoFrame follow — rather than released and
-                // re-acquired (a second of black, and nothing until the next
-                // published frame when the clip is paused).
-                if (configured && accepted && (gotFmt != cfgFmt || gotTransfer != cfgTransfer)) {
-                    std::printf("QCBridgeA: %s changed to %s - reconfiguring\n",
-                                gotFmt != cfgFmt ? "pixel format" : "transfer",
-                                gotFmt != cfgFmt ? (gotFmt == OutputPixelFormat::RGB10 ? "RGB10" : "BGRA8")
-                                                 : gotTransfer == 2 ? "PQ" : gotTransfer == 3 ? "HLG" : "SDR");
+                // Raster, depth or transfer changed (the Output row's dropdowns, or
+                // a source of another class under an automatic raster): the card is
+                // reconfigured in place — the device stays acquired; the video
+                // format, CSC matrix, VPID and InfoFrame follow — rather than
+                // released and re-acquired (a second of black, and nothing until
+                // the next published frame when the clip is paused).
+                if (configured && accepted && (gotFmt != cfgFmt || gotTransfer != cfgTransfer || gotW != cfgW || gotH != cfgH)) {
+                    char what[64];
+                    if (gotW != cfgW || gotH != cfgH) std::snprintf(what, sizeof what, "raster changed to %ux%u", gotW, gotH);
+                    else if (gotFmt != cfgFmt) std::snprintf(what, sizeof what, "pixel format changed to %s", gotFmt == OutputPixelFormat::RGB10 ? "RGB10" : "BGRA8");
+                    else std::snprintf(what, sizeof what, "transfer changed to %s", gotTransfer == 2 ? "PQ" : gotTransfer == 3 ? "HLG" : "SDR");
+                    std::printf("QCBridgeA: %s - reconfiguring\n", what);
                     configureFor(curNum, curDen);
                 }
             }
@@ -317,8 +322,9 @@ void BusSink::run()
             OutputFrameDesc d {};
             const void *px = nullptr;
             if (ring.acquire_latest(&lastSeen, &d, &px)) {
+                // Frames of the previous shape still in the ring after a re-answer are left alone.
                 bool take = d.pixel_format == static_cast<uint32_t>(gotFmt)
-                         && d.width == m_cfg.width && d.height == m_cfg.height;
+                         && d.width == gotW && d.height == gotH;
                 if (take) {
                     uint32_t num = d.source_fps_num, den = d.source_fps_den;
                     if (!num || !den) { num = m_cfg.fallbackFpsNum; den = m_cfg.fallbackFpsDen; }

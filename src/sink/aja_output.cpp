@@ -27,12 +27,21 @@ constexpr uint32_t kAudioBufferBytes = 4096u * 16u * 4u;
 
 bool rateIs(double a, double b) { return std::fabs(a - b) < 0.02; }
 
-// PLAN A3: progressive 1080 and 720 at the rates QCView produces.
+// PLAN A3: progressive UHD, 1080 and 720 at the rates QCView produces.
 NTV2VideoFormat pickFormat(uint32_t w, uint32_t h, uint32_t num, uint32_t den)
 {
     if (!num || !den) return NTV2_FORMAT_UNKNOWN;
     const double fps = double(num) / double(den);
-    if (w == 1920 && h == 1080) {
+    if (w == 3840 && h == 2160) {
+        if (rateIs(fps, 23.976)) return NTV2_FORMAT_3840x2160p_2398;
+        if (rateIs(fps, 24.0))   return NTV2_FORMAT_3840x2160p_2400;
+        if (rateIs(fps, 25.0))   return NTV2_FORMAT_3840x2160p_2500;
+        if (rateIs(fps, 29.97))  return NTV2_FORMAT_3840x2160p_2997;
+        if (rateIs(fps, 30.0))   return NTV2_FORMAT_3840x2160p_3000;
+        if (rateIs(fps, 50.0))   return NTV2_FORMAT_3840x2160p_5000;
+        if (rateIs(fps, 59.94))  return NTV2_FORMAT_3840x2160p_5994;
+        if (rateIs(fps, 60.0))   return NTV2_FORMAT_3840x2160p_6000;
+    } else if (w == 1920 && h == 1080) {
         if (rateIs(fps, 23.976)) return NTV2_FORMAT_1080p_2398;
         if (rateIs(fps, 24.0))   return NTV2_FORMAT_1080p_2400;
         if (rateIs(fps, 25.0))   return NTV2_FORMAT_1080p_2500;
@@ -68,6 +77,8 @@ struct AjaOutput::Impl {
     NTV2FrameRate    frameRate = NTV2_FRAMERATE_UNKNOWN;
     bool             hdmi = false;
     bool             hdmiRgb = true;
+    bool             hdmiYcbcrForced = false;   // UHD above 30p: RGB asked for, YCbCr sent (HDMI 2.0)
+    bool             hdmi4k = false;            // the HDMI rasteriser is in 4K playback mode
     bool             tenBit = false;
     bool             cfgOk = false;
     AjaOutput::HdrSignal hdr;
@@ -198,6 +209,15 @@ bool AjaOutput::configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint
         if (err) *err = m->devName + " cannot output " + ::NTV2VideoFormatToString(vf, true);
         return false;
     }
+    // UHD here is one 12G stream from one frame store (T-TAP Pro, Kona 5 and
+    // Corvid 44 12G firmware, Io 4K Plus): the frame store runs in two-sample
+    // interleave mode and the routing is the HD routing. Quad-link 4K over
+    // four 3G outputs is a different routing and is not done.
+    const bool uhd = NTV2_IS_4K_VIDEO_FORMAT(vf);
+    if (uhd && !(m->card.features().CanDo4KVideo() && m->card.features().CanDo12gRouting())) {
+        if (err) *err = m->devName + " has no single-link 12G UHD output";
+        return false;
+    }
     if (!m->card.features().CanDoFrameBufferFormat(m->pf)) {
         if (err) *err = m->devName + (tenBit ? " has no 10-bit RGB frame store" : " has no 8-bit ARGB frame store");
         return false;
@@ -252,13 +272,29 @@ bool AjaOutput::configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint
     if (m->card.features().HasBiDirectionalSDI()) m->card.SetSDITransmitEnable(m->ch, true);
     m->card.Connect(::GetSDIOutputInputXpt(m->ch, false), cscVidOut, canVerify);
     m->card.SetSDIOutputStandard(m->ch, ::GetNTV2StandardFromVideoFormat(vf));
+    // UHD above 30p does not fit HDMI 2.0 as 10-bit RGB 4:4:4 (18 Gbit/s
+    // carries UHD60 at 4:2:2); the CSC's YCbCr goes to the monitor then.
+    const bool hdmiYcbcrForced = uhd && NTV2_IS_4K_HFR_VIDEO_FORMAT(vf) && hdmiColor == HdmiColor::Rgb;
     if (haveHdmi) {
-        const bool rgb = hdmiColor == HdmiColor::Rgb;
+        const bool rgb = hdmiColor == HdmiColor::Rgb && !hdmiYcbcrForced;
         m->card.Connect(::GetOutputDestInputXpt(NTV2_OUTPUTDESTINATION_HDMI1), rgb ? fsVidOut : cscVidOut, canVerify);
         m->card.SetHDMIOutColorSpace(rgb ? NTV2_HDMIColorSpaceRGB : NTV2_HDMIColorSpaceYCbCr);
         m->card.SetHDMIOutRange(rgb ? NTV2_HDMIRangeFull : NTV2_HDMIRangeSMPTE);
         m->card.SetHDMIOutBitDepth(tenBit ? NTV2_HDMI10Bit : NTV2_HDMI8Bit);
+        // The HDMI rasteriser's own idea of the picture (the 4K player demo's
+        // RouteHDMIOutput): the standard, the rate and 4K playback mode for
+        // UHD, and back to the HD/SD mode after a UHD session. An HD session
+        // that never went UHD is left as it always was.
+        if (uhd || m->hdmi4k) {
+            m->card.SetHDMIOutVideoStandard(::GetNTV2StandardFromVideoFormat(vf));
+            m->card.SetHDMIOutVideoFPS(::GetNTV2FrameRateFromVideoFormat(vf));
+            m->card.SetHDMIV2Mode(uhd ? NTV2_HDMI_V2_4K_PLAYBACK : NTV2_HDMI_V2_HDSD_BIDIRECTIONAL);
+            m->hdmi4k = uhd;
+        }
     }
+    // SetVideoFormat put the frame store into quad-frame (two-sample interleave)
+    // mode for UHD; said explicitly, as the 4K player demo does after routing.
+    if (m->card.features().CanDo12gRouting()) m->card.SetTsiFrameEnable(uhd, m->ch);
 
     // Host buffers: page-aligned and locked for DMA.
     const NTV2FormatDescriptor fd(vf, m->pf, NTV2_VANCMODE_OFF);
@@ -288,7 +324,8 @@ bool AjaOutput::configure(uint32_t width, uint32_t height, uint32_t fpsNum, uint
 
     m->vf = vf;
     m->hdmi = haveHdmi;
-    m->hdmiRgb = hdmiColor == HdmiColor::Rgb;
+    m->hdmiRgb = hdmiColor == HdmiColor::Rgb && !hdmiYcbcrForced;
+    m->hdmiYcbcrForced = hdmiYcbcrForced;
     m->tenBit = tenBit;
     m->hdr = HdrSignal{};
     m->hdr.transfer = transfer;
@@ -406,7 +443,7 @@ std::string AjaOutput::describe() const
     if (!m->configured) return m->devName;
     const char *tf = m->hdr.transfer == 2u ? " PQ 2020" : m->hdr.transfer == 3u ? " HLG 2020" : " SDR 709";
     return m->devName + " " + m->fmtName + (m->tenBit ? " 10-bit" : " 8-bit") + tf + ", SDI"
-         + (m->hdmi ? (m->hdmiRgb ? " + HDMI RGB" : " + HDMI YCbCr") : "");
+         + (m->hdmi ? (m->hdmiRgb ? " + HDMI RGB" : m->hdmiYcbcrForced ? " + HDMI YCbCr (RGB needs 30p or below at UHD)" : " + HDMI YCbCr") : "");
 }
 
 AjaOutputStats AjaOutput::stats()
