@@ -245,7 +245,18 @@ void BusSink::run()
                     req.pixel_format = static_cast<uint32_t>(wantFmt);
                     ring.write_request(req);
                 }
-                if (configured && accepted && (gotFmt != cfgFmt || gotTransfer != cfgTransfer)) { m_aja.close(); configured = false; }   // depth or transfer changed: start over
+                // Depth or transfer changed (the Output row's dropdown): the card
+                // is reconfigured in place — the device stays acquired; the CSC
+                // matrix, VPID and InfoFrame follow — rather than released and
+                // re-acquired (a second of black, and nothing until the next
+                // published frame when the clip is paused).
+                if (configured && accepted && (gotFmt != cfgFmt || gotTransfer != cfgTransfer)) {
+                    std::printf("QCBridgeA: %s changed to %s - reconfiguring\n",
+                                gotFmt != cfgFmt ? "pixel format" : "transfer",
+                                gotFmt != cfgFmt ? (gotFmt == OutputPixelFormat::RGB10 ? "RGB10" : "BGRA8")
+                                                 : gotTransfer == 2 ? "PQ" : gotTransfer == 3 ? "HLG" : "SDR");
+                    configureFor(curNum, curDen);
+                }
             }
 
             // ---- HDR metadata from QCView's Output section, whenever it changes ----
