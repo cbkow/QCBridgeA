@@ -108,3 +108,18 @@ consumers): the PQ output received the viewport's PQ picture (yellow bar
 the ACES 2.0 result) and the SDR output the SDR capture (1023, 958, 0).
 Both engines take the same two paths, so an AJA output under minColor
 needs nothing more.
+
+### Switching the transfer while the output runs (2026-10-14, box)
+
+Chris had to stop and start the AJA output after every transfer change.
+The sink used to release the device and re-acquire it on a changed reply
+(a second of black, and the T-TAP sometimes came back only with the next
+published frame). It now reconfigures the card in place (58cfdf4). Scripted
+run, QCView → QCBridgeA on the T-TAP Pro, the transfer switched every 8 s
+with the clip paused: SDR → PQ → HLG → SDR. The sink logged "transfer
+changed to PQ - reconfiguring", re-described the card ("1080p25 10-bit PQ
+2020"), the InfoFrame metadata followed each step (transfer 2 / primaries 1
+/ 1000 nits, then transfer 3, then back to SDR), 25 transfers/s throughout,
+0 dropped, 0 bad, 786 transfers in all. With pass-through the picture is
+unchanged across the switch when the viewport is SDR, so QCView publishes
+nothing new — the card simply re-tags; a PQ or HLG viewport re-publishes.
