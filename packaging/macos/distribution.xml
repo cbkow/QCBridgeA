@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- productbuild Distribution for the QCBridgeA installer. @VERSION@ is
+     substituted by build-pkg.sh from the built app. The app lands in
+     /Applications; postinstall registers it with QCView. -->
+<installer-gui-script minSpecVersion="2">
+    <title>QCBridgeA @VERSION@</title>
+    <organization>com.qcview-app</organization>
+    <domains enable_localSystem="true"/>
+    <options customize="never" require-scripts="true" rootVolumeOnly="true" hostArchitectures="arm64"/>
+    <allowed-os-versions>
+        <os-version min="13.0"/>
+    </allowed-os-versions>
+    <welcome file="welcome.txt" mime-type="text/plain"/>
+    <license file="LICENSE" mime-type="text/plain"/>
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.qcview-app.QCBridgeA"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="com.qcview-app.QCBridgeA" visible="false">
+        <pkg-ref id="com.qcview-app.QCBridgeA"/>
+    </choice>
+    <pkg-ref id="com.qcview-app.QCBridgeA" version="@VERSION@" onConclusion="none">QCBridgeA-app.pkg</pkg-ref>
+</installer-gui-script>

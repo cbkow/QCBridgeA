@@ -1,0 +1,14 @@
+#!/bin/bash
+# QCBridgeA installer — postinstall (root). Registers the app with QCView:
+# a manifest QCView lists in its Output section. Replace, never merge: the
+# installer is the only source of this file.
+set -e
+DIR="/Library/Application Support/QCView/Outputs"
+mkdir -p "$DIR"
+cat > "$DIR/aja.json" <<'JSON'
+{ "id": "aja", "name": "QCBridgeA (AJA SDI/HDMI)", "label": "AJA", "product": "QCBridgeA", "raster": "auto", "protocol": 1,
+  "exec": "/Applications/QCBridgeA.app/Contents/MacOS/QCBridgeA",
+  "args": ["--id", "aja"] }
+JSON
+chmod 644 "$DIR/aja.json"
+exit 0

@@ -11,17 +11,40 @@ card (T-TAP Pro, Io, KONA) as a video signal at the source's frame rate.
 Nothing is sent until the switch is on; switch it off, or quit QCView, and
 the sink releases the card.
 
-## Status
+## Install (Windows)
 
-In development; nothing is released. See `PLAN.md`.
+Run `QCBridgeA-<version>-Setup-x64.exe` from [Releases](../../releases/latest).
+It installs to `Program Files\QCBridgeA` and registers the output with
+QCView (`%ProgramData%\QCView\Outputs\aja.json`). The installer is not
+code-signed yet, so SmartScreen will ask once.
+
+## Install (macOS)
+
+Download `QCBridgeA-<version>-arm64.pkg` from [Releases](../../releases/latest)
+and run it. It installs QCBridgeA.app in /Applications and registers the
+output with QCView (`/Library/Application Support/QCView/Outputs/aja.json`).
+`packaging/macos/uninstall.command` removes both. The macOS build is
+signed and notarized but has not yet run against an AJA device on a Mac;
+Windows is where it has been proven.
+
+Then, in QCView, open the Output section and press **Start** on the AJA
+row. The row shows the device and the format it is sending ("T-TAP Pro
+1080p25 10-bit PQ 2020, SDI + HDMI RGB"); the transfer (SDR, PQ or HLG)
+and the raster (Auto, 1080p, UHD) can be changed while it runs.
 
 ## Requirements
 
 - An AJA device with playback and AJA's own software installed for the
   driver (AJA Desktop Software 17.x; the development machine runs 17.5.0).
+  Tested on a T-TAP Pro; UHD needs a device with 12G routing (T-TAP Pro,
+  Kona 5 and Corvid 44 with 12G firmware, Io 4K Plus).
 - QCView 2.5.7 or later (the output bus).
-- Windows 10 1809 or later, x64. macOS follows when a Mac with the AJA
-  software is at hand.
+- Windows 10 1809 or later, x64; macOS 13 or later, Apple silicon.
+
+## Status
+
+First release, 0.0.1. The plan and what has been verified are in `PLAN.md`
+and `lab/`; `RELEASE.md` is the release flow.
 
 ## Building
 

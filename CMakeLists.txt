@@ -1,4 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
+# The static MSVC runtime for everything, the AJA SDK's library included
+# (CMP0091 is NEW at 3.24, so this is honoured; it must precede project()):
+# the installer then ships one executable and no Visual C++ redistributable.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 project(QCBridgeA VERSION 0.0.1 LANGUAGES CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -82,6 +86,21 @@ target_compile_definitions(QCBridgeA PRIVATE QCBRIDGEA_VERSION="${PROJECT_VERSIO
 target_link_libraries(QCBridgeA PRIVATE qcbae_wire ajantv2)
 if(MSVC)
     target_compile_options(QCBridgeA PRIVATE /W4 /wd4100)
+    # Explorer's version tab (packaging/windows/qcbridgea.rc.in takes the
+    # project version).
+    configure_file(packaging/windows/qcbridgea.rc.in "${CMAKE_BINARY_DIR}/qcbridgea.rc" @ONLY)
+    target_sources(QCBridgeA PRIVATE "${CMAKE_BINARY_DIR}/qcbridgea.rc")
 else()
     target_compile_options(QCBridgeA PRIVATE -Wall -Wextra)
+endif()
+if(APPLE)
+    # An app bundle, so the pkg installs one signed, notarized unit into
+    # /Applications and the manifest points inside it. Headless: no Dock
+    # icon, no menu bar (LSBackgroundOnly in the plist).
+    set(MACOSX_BUNDLE_EXECUTABLE_NAME "QCBridgeA")
+    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
+    set(MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}")
+    set_target_properties(QCBridgeA PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/Info.plist.in")
 endif()

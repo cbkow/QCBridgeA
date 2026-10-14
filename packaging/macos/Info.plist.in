@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>@MACOSX_BUNDLE_EXECUTABLE_NAME@</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.qcview-app.QCBridgeA</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>QCBridgeA</string>
+    <key>CFBundleDisplayName</key>
+    <string>QCBridgeA</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@MACOSX_BUNDLE_SHORT_VERSION_STRING@</string>
+    <key>CFBundleVersion</key>
+    <string>@MACOSX_BUNDLE_BUNDLE_VERSION@</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <!-- Headless: QCView starts it and shows its status; no Dock icon, no
+         menu bar, no app-switcher entry. -->
+    <key>LSBackgroundOnly</key>
+    <true/>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.video</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>MIT. AJA, KONA, Io and T-TAP are trademarks of AJA Video Systems, Inc.</string>
+</dict>
+</plist>

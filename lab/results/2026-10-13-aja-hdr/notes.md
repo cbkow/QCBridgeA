@@ -177,3 +177,17 @@ HDR block once before the new block lands in the same poll (two "HDR
 metadata" lines); two settings changed in one second answer twice (two
 reconfigures). Still owed: the monitor's info page at UHD (3840x2160 and
 ST 2084 / BT.2020), UHD above 30p (HDMI then YCbCr), 23.976 at UHD.
+
+## Packaging and a 23.976 run (2026-10-14, evening)
+
+First release artifacts, 0.0.1: `dist/QCBridgeA-0.0.1-Setup-x64.exe` (Inno,
+one static exe — the whole tree now builds against the static MSVC runtime,
+`CMAKE_MSVC_RUNTIME_LIBRARY` before `project()`, the SDK's library included;
+the first try set it per target and the SDK's objects came out `/MD`,
+`__imp_system` unresolved) and `dist/QCBridgeA-0.0.1-arm64.pkg` (signed,
+notarized app and pkg; the Mac build links only /usr/lib and /System; smoke
+test = `--seconds 1` reaches the bus; NOT run against an AJA device on a Mac).
+The static exe ran the switch rig on the T-TAP Pro as before (SDR → PQ →
+HLG → SDR in place); Chris loaded a 23.976 clip into that run and the sink
+reconfigured: "rate changed to 24000/1001 — reconfiguring → 1080p23.98,
+24/s to the card, 0 dropped". 23.976 cadence ticked.

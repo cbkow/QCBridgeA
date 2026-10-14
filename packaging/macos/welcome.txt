@@ -1,0 +1,15 @@
+QCBridgeA sends what QCView shows and plays out of an AJA device's SDI and
+HDMI outputs, as a 10-bit RGB signal at the source's frame rate, with the
+mixed audio embedded.
+
+This installs QCBridgeA.app in /Applications and registers it with QCView
+(/Library/Application Support/QCView/Outputs/aja.json). Afterwards, in
+QCView, open the Output section and press Start on the AJA row: QCView
+starts QCBridgeA, which takes the device and reports its format on the row.
+Nothing is sent until Start.
+
+AJA's own software for the device (AJA Desktop Software 17.x, for the
+driver) and QCView 2.5.7 or later are required.
+
+AJA, KONA, Io and T-TAP are trademarks of AJA Video Systems, Inc.; QCBridgeA
+is not an AJA product.
